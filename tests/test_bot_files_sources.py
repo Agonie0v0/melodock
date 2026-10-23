@@ -225,11 +225,17 @@ def test_webhook_payload_signing_and_notification_dedup(setup_bot, monkeypatch, 
     bot.wecom_http = Mock()
     bot.wecom_http.post.return_value.json.return_value = {'errcode': 0}
     job = completed_job(audio, track)
+    job['processing'] = {'status': 'tagging', 'detail': '正在整理'}
+    store.put('download', job['id'], job)
+    bot.queue_webhook_notifications()
+    assert not store.values('bot_outbox')
+    job['processing'] = {'status': 'needs_review', 'detail': '有歌曲待确认'}
     store.put('download', job['id'], job)
     bot.queue_webhook_notifications()
     bot.queue_webhook_notifications()
     assert len(store.values('bot_outbox')) == 1
     item = store.values('bot_outbox')[0]
+    assert '有歌曲待确认' in item['text']
     bot.send(item)
     kwargs = bot.wecom_http.post.call_args.kwargs
     body = kwargs['json']

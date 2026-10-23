@@ -28,6 +28,8 @@ from fastapi.exception_handlers import http_exception_handler
 from pydantic import BaseModel, Field
 import engine_worker
 import local_library
+from library_pipeline import LibraryPipeline, ProcessBody
+from metadata_scraper import from_song as song_metadata
 from search_runtime import SearchWorkers, SearchCoordinator, deliver, terminate
 
 BOT_SEARCH_IDLE_TIMEOUT = 90
@@ -97,9 +99,16 @@ class PlaylistTracksBody(BaseModel):
 
 
 class FileTagsBody(BaseModel):
-    title: str = Field(max_length=300)
-    artist: str = Field(max_length=300)
-    album: str = Field(max_length=300)
+    title: str | None = Field(default=None, max_length=300)
+    artist: str | None = Field(default=None, max_length=300)
+    album: str | None = Field(default=None, max_length=300)
+    album_artist: str | None = Field(default=None, max_length=300)
+    date: str | None = Field(default=None, max_length=100)
+    track_number: str | None = Field(default=None, max_length=30)
+    disc_number: str | None = Field(default=None, max_length=30)
+    genre: str | None = Field(default=None, max_length=300)
+    composer: str | None = Field(default=None, max_length=300)
+    comment: str | None = Field(default=None, max_length=2000)
 
 
 def install(old, root):
@@ -137,6 +146,8 @@ def install(old, root):
         with db_lock:
             db.execute('DELETE FROM records WHERE kind=? AND id=?', (kind, key))
             db.commit()
+
+    library = LibraryPipeline(old, db, db_lock, get, put, values, remove)
 
     registered = old.MusicClientBuilder.REGISTERED_MODULES
     catalog = [{'id': source_id(name), 'engine_name': name, 'label': LABELS.get(source_id(name), name.removesuffix('MusicClient')),
@@ -652,7 +663,8 @@ def install(old, root):
     async def playback(sid: str):
         try:
             record = await asyncio.to_thread(get, 'track', sid)
-            result = (await asyncio.to_thread(library_file, record['local_path']))['track'] if record and record.get('local_path') else await resolved_track(sid)
+            result = ((await asyncio.to_thread(library_file, record['local_path']))['track'] if record and record.get('local_path')
+                      else record['track'] if record and record.get('navidrome_id') else await resolved_track(sid))
             old.pushlog('info', f'准备试听：{result["title"]} · {result["source"]} · {result["playback"]["codec"]} · 状态 {result["playback"]["state"]}', category='playback', task_id=sid)
             return result
         except Exception:
@@ -666,6 +678,12 @@ def install(old, root):
     @router.get('/api/tracks/{sid}/lyrics')
     async def lyrics(sid: str):
         record = await asyncio.to_thread(get, 'track', sid)
+        if record and record.get('navidrome_id'):
+            try:
+                data = await asyncio.to_thread(library.navidrome.request, 'getLyrics', artist=record['track']['artist'], title=record['track']['title'])
+                return {'text': (data.get('lyrics') or {}).get('value', '')}
+            except HTTPException:
+                return {'text': ''}
         if record and record.get('local_path'):
             try:
                 return {'text': await asyncio.to_thread(local_library.read_lyrics, resolve_library_file(record['local_path']))}
@@ -845,10 +863,7 @@ def install(old, root):
 
     def file_token(path):
         path = Path(path).resolve()
-        for base in old.manager.workdirs():
-            if path.is_relative_to(base):
-                return json.dumps([str(base), str(path.relative_to(base))], ensure_ascii=False)
-        return None
+        return library.token(path)
 
     def run_download(job, song, control):
         ident = job['id']
@@ -856,6 +871,8 @@ def install(old, root):
         input_path, output_path = private / f'{ident}.input', private / f'{ident}.progress'
         staging = old.FILE_ROOT / '.partial' / ident
         log_path, log_cursor = Path(str(output_path) + '.log'), 0
+        processing = library.settings()
+        processing_files, processing_sources = [], {}
         def clear_staging():
             if staging.exists() and staging.resolve().is_relative_to(old.FILE_ROOT.resolve()) and not staging.is_symlink():
                 shutil.rmtree(staging)
@@ -873,6 +890,10 @@ def install(old, root):
                 intended_dir = Path(original_song.work_dir).resolve()
                 if not any(intended_dir.is_relative_to(base) for base in old.manager.workdirs()):
                     raise ValueError('曲目保存路径不在音乐库中')
+                if processing['auto_organize']:
+                    intended_dir = old.FILE_ROOT / '.processing' / ident
+                    if not intended_dir.resolve().is_relative_to(old.FILE_ROOT.resolve()):
+                        raise ValueError('自动整理暂存目录不在音乐根目录内')
                 original_song.work_dir, original_song._save_path = str(staging), None
                 input_path.write_bytes(pickle.dumps({'song': original_song, 'config': cfg,
                                                     'bytes': job['bytes'], 'total_bytes': job['total_bytes']}, protocol=pickle.HIGHEST_PROTOCOL))
@@ -945,9 +966,30 @@ def install(old, root):
                         raise ValueError('下载器没有保存音频文件')
                     job.update(status='complete', bytes=audio.stat().st_size, total_bytes=audio.stat().st_size,
                                file=file_token(audio), detail=outcome['detail'])
+                    summaries = outcome.get('metadata', [])
+                    for index, original_path in enumerate(completed):
+                        final = moved.get(original_path)
+                        if final:
+                            summary = summaries[index] if index < len(summaries) else song_metadata(song) if len(completed) == 1 else {}
+                            library.asset(final, summary)
+                            token = file_token(final)
+                            processing_files.append(token)
+                            processing_sources[token] = summary
+                    if processing['auto_scrape'] or processing['auto_organize']:
+                        job['processing'] = {'id': '', 'status': 'queued', 'detail': '等待自动刮削与整理'}
+                        job['processing_paths'] = processing_files
+                        job['processing_action'] = 'both' if processing['auto_scrape'] and processing['auto_organize'] else 'scrape' if processing['auto_scrape'] else 'organize'
                 old.pushlog('info' if job['status'] == 'complete' else 'error',
                             f'{job["track"]["title"]} · {job["track"]["source"]}：{job["detail"]}', category='download', task_id=ident)
                 put('download', ident, job)
+            if job['status'] == 'complete' and (processing['auto_scrape'] or processing['auto_organize']):
+                try:
+                    action = 'both' if processing['auto_scrape'] and processing['auto_organize'] else 'scrape' if processing['auto_scrape'] else 'organize'
+                    library.submit(ProcessBody(paths=processing_files, action=action), ident, processing_sources)
+                except Exception as error:
+                    saved = get('download', ident, job)
+                    saved['processing'] = {'id': '', 'status': 'failed', 'detail': library.error_message(error)}
+                    put('download', ident, saved)
         except Exception as error:
             old.pushlog('error', f'下载任务异常\n{traceback.format_exc()}', category='download', task_id=ident)
             with runner_lock:
@@ -1070,40 +1112,28 @@ def install(old, root):
     @router.get('/api/files')
     def files():
         result = []
-        for value in old.files()['files']:
-            if '.partial' in Path(value['rel']).parts:
-                continue
-            if value['name'].startswith('.musicdl-tags-'):
-                continue
-            token = json.dumps([value['dir'], value['rel']], ensure_ascii=False)
+        for path in library.scan():
             try:
-                result.append(library_file(token))
+                result.append(library_file(file_token(path)))
             except (HTTPException, OSError):
                 continue
         return result
 
     def resolve_library_file(path):
-        try:
-            base, relative = json.loads(path)
-            if not isinstance(base, str) or not isinstance(relative, str):
-                raise ValueError('Invalid file token')
-        except (ValueError, TypeError):
-            # Paths saved by the earlier Rust build remain readable under its root.
-            base, relative = str(old.FILE_ROOT), path
-        if '.partial' in Path(relative).parts:
-            raise HTTPException(403, '不能操作下载中的临时文件')
-        return old.resolvefile(base, relative)
+        return library.resolve(path)
 
     def library_file(token):
         target = resolve_library_file(token)
-        base, relative = json.loads(file_token(target))
+        base = next(base for base in library.roots() if target.is_relative_to(base))
+        relative = target.relative_to(base)
         info = target.stat()
         result = {'path': file_token(target), 'name': target.name, 'size': info.st_size,
-                  'folder': Path(relative).parent.as_posix(), 'root': base, 'editable': False}
+                  'folder': Path(relative).parent.as_posix(), 'root': str(base), 'editable': False}
         if target.suffix.lower() not in local_library.AUDIO_EXTENSIONS:
             return result
         tags = local_library.read_metadata(str(target), info.st_mtime_ns, info.st_size)
-        ident = 'local-' + hashlib.sha256(result['path'].encode()).hexdigest()[:24]
+        asset = library.asset(target)
+        ident = asset['id']
         codec = target.suffix.lower().lstrip('.')
         track = {'id': ident, 'source': 'local', 'source_id': 'local', 'title': tags['title'], 'artist': tags['artist'],
                  'album': tags['album'], 'duration': tags['duration'], 'size_bytes': info.st_size, 'qualities': [],
@@ -1113,7 +1143,8 @@ def install(old, root):
         record = {'track': track, 'local_path': result['path']}
         if get('track', ident) != record:
             put('track', ident, record)
-        result.update(track=track, editable=tags['editable'])
+        result.update(track=track, editable=tags['editable'], metadata={key: tags.get(key, '') for key in local_library.TAG_FIELDS},
+                      locked_fields=asset['locks'])
         return result
 
     @router.get('/api/files/audio')
@@ -1144,19 +1175,19 @@ def install(old, root):
         if target.suffix.lower() not in local_library.AUDIO_EXTENSIONS:
             raise HTTPException(400, '请选择音频文件')
         try:
-            local_library.update_metadata(target, body.title.strip(), body.artist.strip(), body.album.strip())
+            with library.lock(target):
+                changes = {key: value.strip() for key, value in body.model_dump(exclude_unset=True).items() if value is not None}
+                info = target.stat()
+                before = local_library.read_metadata(str(target), info.st_mtime_ns, info.st_size)
+                changes = {key: value for key, value in changes.items() if value != before.get(key, '')}
+                local_library.write_metadata(target, changes)
+                library.lock_fields(target, changes)
         except (ValueError, local_library.mutagen.MutagenError) as error:
             raise HTTPException(400, f'无法编辑标签：{error}')
         except OSError:
             raise HTTPException(409, '文件正在使用或没有写入权限，请停止播放或关闭占用程序后重试')
         result = library_file(path)
-        for kind in ('favorite', 'playlist'):
-            if kind == 'favorite' and get(kind, result['track']['id']):
-                put(kind, result['track']['id'], result['track'])
-            elif kind == 'playlist':
-                saved = get(kind, 'main', [])
-                if any(isinstance(t, dict) and t.get('id') == result['track']['id'] for t in saved):
-                    put(kind, 'main', [result['track'] if t['id'] == result['track']['id'] else t for t in saved])
+        library.sync_references(result['track']['id'], result)
         return result
 
     @router.get('/api/files/content')
@@ -1167,24 +1198,39 @@ def install(old, root):
     @router.delete('/api/files')
     def delete_library_file(path: str):
         target = resolve_library_file(path)
+        token = file_token(target)
+        local_id = library.asset(target)['id'] if target.suffix.lower() in local_library.AUDIO_EXTENSIONS else None
+        with db_lock:
+            aliases = {row[0] for row in db.execute('SELECT token FROM library_paths WHERE asset_id=?', (local_id,)).fetchall()}
+        tokens = aliases | {token, path}
+        local_ids = {local_id, *('local-' + hashlib.sha256(alias.encode()).hexdigest()[:24] for alias in aliases)}
         try:
-            target.unlink()
+            with library.lock(target):
+                resolve_library_file(path).unlink()
         except OSError:
             raise HTTPException(409, '文件正在使用或无法删除，请关闭占用程序后重试')
         # Keep history, but stop offering a link to a deleted file.
         with runner_lock:
             for job in values('download'):
-                if job.get('file') == file_token(target):
+                if job.get('file') in tokens:
                     job.update(file=None, detail='音乐文件已从音乐库删除')
                     put('download', job['id'], job)
-        local_id = 'local-' + hashlib.sha256(file_token(target).encode()).hexdigest()[:24]
-        remove('track', local_id)
-        remove('favorite', local_id)
+        for ident in local_ids - {None}:
+            remove('track', ident)
+            remove('favorite', ident)
         saved = get('playlist', 'main', [])
-        if any(isinstance(t, dict) and t.get('id') == local_id for t in saved):
-            put('playlist', 'main', [t for t in saved if not isinstance(t, dict) or t.get('id') != local_id])
+        if any(isinstance(t, dict) and t.get('id') in local_ids for t in saved):
+            put('playlist', 'main', [t for t in saved if not isinstance(t, dict) or t.get('id') not in local_ids])
+        for collection in values('collection'):
+            collection['tracks'] = [t for t in collection.get('tracks', []) if t.get('id') not in local_ids]
+            put('collection', collection['id'], collection)
         old.pushlog('info', f'已删除音乐文件：{target.name}', category='download')
         return {'deleted': True}
+
+    library.index_file = library_file
+    library.install(router)
+    library.navidrome.install(router, lambda track: put('track', track['id'], {'track': track, 'navidrome_id': track['source_id']}))
+    library.recover()
 
     @old.app.on_event('shutdown')
     async def shutdown():
@@ -1199,6 +1245,7 @@ def install(old, root):
         else:
             search_pool.shutdown(wait=False, cancel_futures=True)
         download_pool.shutdown(wait=False, cancel_futures=True)
+        await asyncio.to_thread(library.close)
 
     for job in values('download'):
         if job['status'] in {'queued', 'resolving', 'downloading', 'enriching'}:
@@ -1210,7 +1257,8 @@ def install(old, root):
     old.app.router.routes[0:0] = router.routes
     old.app.mount('/assets', StaticFiles(directory=root / 'frontend/dist/assets'), name='assets')
     old.app.state.engine_test = {'remember': remember, 'song_for': song_for, 'search_pool': search_pool,
-                                'source_results': source_results, 'config': config, 'registered': registered, 'workers': workers, 'coordinator': coordinator}
+                                'source_results': source_results, 'config': config, 'registered': registered, 'workers': workers, 'coordinator': coordinator,
+                                'library': library}
 
     async def bot_search(keyword, sources, on_track=None):
         cfg = copy.deepcopy(old.manager.config)

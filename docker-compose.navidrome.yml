@@ -1,0 +1,29 @@
+# 从当前源码构建，避免依赖尚未发布此功能的 latest 镜像。
+services:
+  musicdl-webui:
+    build: .
+    image: musicdl-local:library
+    restart: unless-stopped
+    init: true
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./music:/music
+      - ./data:/data
+    environment:
+      MUSICDL_USER: admin
+      MUSICDL_PASS: '请改成你自己的强密码'
+      # PUID: '1000'
+      # PGID: '1000'
+
+  navidrome:
+    image: deluan/navidrome:latest
+    restart: unless-stopped
+    ports:
+      - "4533:4533"
+    volumes:
+      - ./music/library:/music:ro
+      - ./navidrome-data:/data
+    environment:
+      ND_MUSICFOLDER: /music
+      ND_DATAFOLDER: /data

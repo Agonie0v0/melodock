@@ -60,6 +60,7 @@ export interface DownloadJob {
   total_bytes: number | null;
   detail: string;
   file: string | null;
+  processing?: { id: string; status: string; detail: string };
 }
 export interface LibraryFile {
   path: string;
@@ -69,6 +70,72 @@ export interface LibraryFile {
   folder?: string;
   track?: Track;
   editable?: boolean;
+  metadata?: Record<string, string>;
+  locked_fields?: string[];
+}
+
+export interface NavidromeConfig {
+  enabled: boolean;
+  url: string;
+  username: string;
+  auto_scan: boolean;
+  has_password: boolean;
+  has_api_key: boolean;
+}
+export interface LibraryConfig {
+  auto_scrape: boolean;
+  auto_organize: boolean;
+  library_dir: string;
+  file_root: string;
+  folder_template: string;
+  filename_template: string;
+  sources: string[];
+  overwrite: boolean;
+  lyrics_mode: string;
+  cover_mode: string;
+  fields: string[];
+  backup_days: number;
+  navidrome: NavidromeConfig;
+}
+export interface MetadataCandidate {
+  id: string;
+  source: string;
+  title: string;
+  artist: string;
+  album: string;
+  score: number;
+  reasons: string[];
+  conflicts: string[];
+  [key: string]: unknown;
+}
+export interface LibraryJobItem {
+  id: string;
+  path: string;
+  name: string;
+  original_path: string;
+  target: string;
+  status: string;
+  before: Record<string, string>;
+  after: Record<string, string>;
+  candidates: MetadataCandidate[];
+  chosen: string | null;
+  locks: string[];
+  warnings: string[];
+  error?: string;
+  operation_id?: string;
+}
+export interface LibraryJob {
+  id: string;
+  action: string;
+  status: string;
+  created_at: number;
+  updated_at: number;
+  total: number;
+  processed: number;
+  detail: string;
+  items?: LibraryJobItem[];
+  warnings: string[];
+  duplicates?: { id: string; name: string; path: string }[][];
 }
 export interface SourceStatus {
   state: string;

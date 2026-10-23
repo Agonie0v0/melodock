@@ -835,6 +835,8 @@ class BotService:
         target = self.resolve(job['file'])
         limit = 20 * 1024 * 1024
         text = f'下载完成\n{concise(job["track"]["title"])} · {concise(job["track"].get("artist"))}\n{self.job_size(job)}'
+        if job.get('processing'):
+            text += '\n' + concise(job['processing'].get('detail', ''), 120)
         if message['channel'] == 'wecom' and target.stat().st_size > limit:
             if self.links:
                 self.reply(message, text + f'\n文件超过该渠道上传上限（{format_size(limit)}），请通过链接下载原文件。',
@@ -933,6 +935,8 @@ class BotService:
             for job in self.values('download'):
                 if job['status'] not in {'complete', 'failed', 'cancelled'}:
                     continue
+                if (job.get('processing') or {}).get('status') in {'queued', 'identifying', 'tagging', 'organizing', 'indexing', 'restoring'}:
+                    continue
                 key = f'{channel}:{job["id"]}'
                 if self.get('bot_notice', key) == job['status']:
                     continue
@@ -940,6 +944,8 @@ class BotService:
                 url = None
                 if job['status'] == 'complete':
                     text += '\n' + self.job_size(job)
+                    if job.get('processing'):
+                        text += '\n' + concise(job['processing'].get('detail', ''), 120)
                     if self.links:
                         try:
                             url = self.links.create(job)
@@ -1018,6 +1024,8 @@ class BotService:
                         continue
                     job = self.get('download', task['id'])
                     if not job or job['status'] not in {'complete', 'failed', 'paused', 'cancelled'} or task['notified'] == job['status']:
+                        continue
+                    if (job.get('processing') or {}).get('status') in {'queued', 'identifying', 'tagging', 'organizing', 'indexing', 'restoring'}:
                         continue
                     if job['status'] == 'complete':
                         try:

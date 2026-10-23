@@ -178,7 +178,7 @@ def test_bot_uses_shared_engine_queue_and_signed_link_without_web_login(monkeypa
     monkeypatch.setattr(bot, 'sources', ['netease'])
     monkeypatch.setattr(bot, 'tg_users', {'123'})
     monkeypatch.setattr(bot, 'links', DownloadLinks(bot.get, bot.put, bot.links.resolve if bot.links else
-                       lambda token: app.original.resolvefile(*json.loads(token)), 'https://music.example.com', 86400))
+                       app.app.state.engine_test['library'].resolve, 'https://music.example.com', 86400))
     message = {'id': 'd' * 64, 'channel': 'tg', 'user': '123', 'text': '/search bot-fixture'}
     async def search():
         await bot.command(message)
@@ -195,7 +195,7 @@ def test_bot_uses_shared_engine_queue_and_signed_link_without_web_login(monkeypa
         time.sleep(.2)
     assert job['status'] == 'complete', job
     from local_library import download_stem
-    assert Path(json.loads(job['file'])[1]).stem.startswith(download_stem(job['track']['title'], job['track']['artist']))
+    assert app.app.state.engine_test['library'].resolve(job['file']).stem.startswith(download_stem(job['track']['title'], job['track']['artist']))
     assert bot.get('bot_task', ident)['owner'] == 'tg:123'
     # Normal APIs remain session protected; only the signed route is public.
     monkeypatch.setattr(app.original, 'AUTH_ENABLED', True)
@@ -580,7 +580,7 @@ def test_exact_song_info_persists_and_original_downloader_saves_audio(monkeypatc
     assert job['status'] == 'complete', job
     folders = {'source': [song.source], 'flat': [], 'artist': [song.singers],
                'artist_album': [song.singers, song.album]}
-    audio_path = app.original.resolvefile(*json.loads(job['file']))
+    audio_path = app.app.state.engine_test['library'].resolve(job['file'])
     assert audio_path == base.joinpath(*folders[layout], 'Generated integration audio - Tests.wav')
     response = client.get('/api/files/content', params={'path': job['file']})
     assert response.status_code == 200
@@ -590,6 +590,50 @@ def test_exact_song_info_persists_and_original_downloader_saves_audio(monkeypatc
     logs = client.get('/api/logs').json()['logs']
     assert any(entry['category'] == 'download' and entry['task_id'] == ident and
                'Start to download music files' in entry['message'] for entry in logs)
+
+
+def test_download_automatically_scrapes_organizes_and_retains_signed_link(monkeypatch):
+    from bot_notifications import DownloadLinks
+    client = TestClient(app.app)
+    state = app.app.state.engine_test
+    pipeline = state['library']
+    previous = pipeline.settings()
+    cfg = copy.deepcopy(app.original.manager.config)
+    cfg['global_client_cfg']['work_dir'] = str(_root / 'music' / 'automatic')
+    monkeypatch.setattr(app.original.manager, 'config', cfg)
+    song = fixture_song()
+    song.identifier = 'automatic-pipeline-integration'
+    song.lyric = '[00:00]自动整理歌词'
+    track = state['remember'](song)
+    try:
+        saved = client.put('/api/library/settings', headers=HEADERS, json={**previous, 'auto_scrape': True, 'auto_organize': True})
+        assert saved.status_code == 200
+        result = client.post('/api/downloads', headers=HEADERS, json=[{'track_id': track['id'], 'quality_id': track['qualities'][0]['id']}])
+        ident = result.json()[0]['id']
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            job = pipeline.get('download', ident)
+            if job['status'] == 'failed' or (job.get('processing') or {}).get('status') in {'complete', 'failed', 'needs_review'}:
+                break
+            time.sleep(.1)
+        assert job['status'] == 'complete' and job['processing']['status'] == 'complete', job
+        path = pipeline.resolve(job['file'])
+        assert path.is_relative_to(pipeline.library_root()) and path.is_file()
+        assert path.with_suffix('.lrc').read_text(encoding='utf-8').strip() == '[00:00]自动整理歌词'
+        with wave.open(str(path)) as audio:
+            assert audio.readframes(8000) == b'\0\0' * 8000
+        links = DownloadLinks(pipeline.get, pipeline.put, pipeline.resolve, 'https://music.example.com', 86400)
+        monkeypatch.setattr(app.app.state.bots, 'links', links)
+        url = links.create(job)
+        processing = pipeline.get('library_job', job['processing']['id'])
+        pipeline.restore(processing['id'])
+        pipeline.futures[processing['id']].result(timeout=10)
+        from urllib.parse import urlsplit
+        parsed = urlsplit(url)
+        response = client.get(parsed.path + '?' + parsed.query)
+        assert response.status_code == 200 and response.content.startswith(b'RIFF')
+    finally:
+        pipeline.put('library_setting', 'config', previous)
 
 
 def test_original_search_receives_unmodified_parser_arguments(monkeypatch):

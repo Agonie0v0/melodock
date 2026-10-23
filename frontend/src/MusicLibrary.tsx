@@ -7,11 +7,15 @@ import {
   Trash2,
   Download,
   Music2,
+  WandSparkles,
+  FolderSync,
 } from "lucide-react";
 import { Button, Cover, Modal } from "./components";
 import { api } from "./api";
 import { clock } from "./lyrics";
 import type { LibraryFile, Track } from "./types";
+import type { LibraryAction } from "./LibraryWorkspace";
+import { tagLabels } from "./LibrarySettings";
 
 export function MusicLibrary({
   files,
@@ -26,6 +30,7 @@ export function MusicLibrary({
   queue,
   remove,
   changed,
+  manage,
 }: {
   files: LibraryFile[];
   selected: string[];
@@ -39,13 +44,18 @@ export function MusicLibrary({
   queue: (tracks: Track[]) => void;
   remove: (files: LibraryFile[]) => void;
   changed: (file: LibraryFile) => void;
+  manage?: (action: LibraryAction, files: LibraryFile[]) => void;
 }) {
   const [query, setQuery] = useState("");
   const [folder, setFolder] = useState("all");
   const [mode, setMode] = useState("songs");
   const [sort, setSort] = useState("title");
   const [editing, setEditing] = useState<LibraryFile | null>(null);
-  const [draft, setDraft] = useState({ title: "", artist: "", album: "" });
+  const [draft, setDraft] = useState<Record<string, string>>({
+    title: "",
+    artist: "",
+    album: "",
+  });
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const folderKey = (file: LibraryFile) =>
@@ -90,6 +100,7 @@ export function MusicLibrary({
   function edit(file: LibraryFile) {
     if (!file.track) return;
     setDraft({
+      ...file.metadata,
       title: file.track.title,
       artist: file.track.artist,
       album: file.track.album,
@@ -221,6 +232,43 @@ export function MusicLibrary({
                 >
                   加入待播
                 </button>
+                {manage && (
+                  <>
+                    <button
+                      className="secondary"
+                      disabled={!chosen.some((file) => file.track) || busy}
+                      onClick={() => manage("both", chosen)}
+                    >
+                      <WandSparkles />
+                      刮削并整理
+                    </button>
+                    <button
+                      className="secondary"
+                      disabled={!chosen.some((file) => file.track) || busy}
+                      onClick={() => manage("organize", chosen)}
+                    >
+                      <FolderSync />
+                      整理目录
+                    </button>
+                    <select
+                      className="library-tool-select"
+                      aria-label="更多音乐管理操作"
+                      value=""
+                      disabled={!chosen.some((file) => file.track) || busy}
+                      onChange={(e) => {
+                        if (e.target.value)
+                          manage(e.target.value as LibraryAction, chosen);
+                      }}
+                    >
+                      <option value="">更多管理操作</option>
+                      <option value="scrape">只刮削标签</option>
+                      <option value="edit">编辑标签、歌词与封面</option>
+                      <option value="extract">从文件名提取标签</option>
+                      <option value="clean">清理与替换标签文本</option>
+                      <option value="duplicates">检查完全相同的文件</option>
+                    </select>
+                  </>
+                )}
               </>
             )}
             <button
@@ -390,20 +438,48 @@ export function MusicLibrary({
           >
             <p>{editing.name}</p>
             <p className="management-help">
-              修改标题、歌手和专辑标签，文件名与音频内容保持不变。
+              标签写回音频文件，修改的字段会锁定以保留人工整理结果。
             </p>
-            {(
-              [
-                ["title", "歌曲标题"],
-                ["artist", "歌手"],
-                ["album", "专辑"],
-              ] as const
-            ).map(([key, label]) => (
+            {!!editing.locked_fields?.length && (
+              <div className="management-help">
+                <p>
+                  已锁定：
+                  {editing.locked_fields
+                    .map((key) => tagLabels[key] || key)
+                    .join("、")}
+                </p>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={saving}
+                  onClick={async () => {
+                    setSaving(true);
+                    setEditError("");
+                    try {
+                      await api(
+                        `/library/files/locks?path=${encodeURIComponent(editing.path)}`,
+                        "DELETE",
+                      );
+                      const updated = { ...editing, locked_fields: [] };
+                      setEditing(updated);
+                      changed(updated);
+                    } catch (e) {
+                      setEditError((e as Error).message);
+                    } finally {
+                      setSaving(false);
+                    }
+                  }}
+                >
+                  解除标签锁定
+                </button>
+              </div>
+            )}
+            {Object.entries(tagLabels).map(([key, label]) => (
               <label key={key}>
                 {label}
                 <input
                   maxLength={300}
-                  value={draft[key]}
+                  value={draft[key] || ""}
                   onChange={(e) =>
                     setDraft({ ...draft, [key]: e.target.value })
                   }

@@ -2,7 +2,8 @@ import { Cover, Button, Lyrics, Modal } from "./components";
 import { EngineSettings } from "./EngineSettings";
 import { BotSettings } from "./BotSettings";
 import { RuntimeLogs } from "./RuntimeLogs";
-import { MusicLibrary } from "./MusicLibrary";
+import { LibraryWorkspace } from "./LibraryWorkspace";
+import { LibrarySettings, processingLabels } from "./LibrarySettings";
 import { PlaylistLibrary } from "./PlaylistLibrary";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -67,7 +68,7 @@ const views = {
   playlists: ["我的歌单", "保存、播放与管理导入的歌单"],
   queue: ["下载队列", "下载进度与所选音质"],
   favorites: ["我的收藏", "保存喜欢的曲目与音源"],
-  files: ["音乐文件", "本地音乐库"],
+  files: ["音乐库", "本地音乐管理、刮削整理与 Navidrome"],
   logs: ["运行日志", "实时查看搜索、下载与报错详情"],
   settings: ["音源与设置", "账号权限、代理与下载偏好"],
   bots: ["通知与机器人", "企业微信应用、Telegram 与手机音乐下载链接"],
@@ -2182,6 +2183,16 @@ export function App() {
                       {job.total_bytes ? ` / ${bytes(job.total_bytes)}` : ""}
                       {job.detail && ` · ${job.detail}`}
                     </small>
+                    {job.processing && (
+                      <small
+                        className={`processing-inline is-${job.processing.status}`}
+                        role="status"
+                      >
+                        {processingLabels[job.processing.status] ||
+                          job.processing.status}{" "}
+                        · {job.processing.detail}
+                      </small>
+                    )}
                     {job.file && (
                       <a
                         href={`/api/files/content?path=${encodeURIComponent(job.file)}`}
@@ -2364,7 +2375,8 @@ export function App() {
             </section>
           )}
           {view === "files" && (
-            <MusicLibrary
+            <LibraryWorkspace
+              openSettings={() => setView("settings")}
               files={files}
               selected={selectedFiles}
               setSelected={setSelectedFiles}
@@ -2419,6 +2431,7 @@ export function App() {
           )}
           {view === "settings" && config && (
             <section className="view">
+              <LibrarySettings />
               <EngineSettings sources={sources} saved={load} />
             </section>
           )}

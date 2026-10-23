@@ -1,0 +1,460 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  Disc3,
+  Play,
+  Plus,
+  RefreshCw,
+  Search,
+  Users,
+} from "lucide-react";
+import { api } from "./api";
+import { Cover, Button } from "./components";
+import { clock } from "./lyrics";
+import type { Track } from "./types";
+
+interface Album {
+  id: string;
+  name: string;
+  artist: string;
+  year?: number;
+  song_count: number;
+  cover: string | null;
+}
+interface Artist {
+  id: string;
+  name: string;
+  album_count: number;
+}
+interface AlbumDetail extends Album {
+  tracks: Track[];
+}
+
+export function NavidromeLibrary({
+  play,
+  queue,
+  openSettings,
+}: {
+  play: (track: Track) => void;
+  queue: (tracks: Track[]) => void;
+  openSettings: () => void;
+}) {
+  const [mode, setMode] = useState("albums");
+  const [sort, setSort] = useState("newest");
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [albums, setAlbums] = useState<Album[]>([]);
+  const [artists, setArtists] = useState<Artist[]>([]);
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [artist, setArtist] = useState<Artist | null>(null);
+  const [album, setAlbum] = useState<AlbumDetail | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  const [scan, setScan] = useState<{
+    scanning?: boolean;
+    count?: number;
+  } | null>(null);
+  const [scanBusy, setScanBusy] = useState(false);
+  const albumRequest = useRef<AbortController | null>(null);
+  useEffect(() => {
+    albumRequest.current?.abort();
+    const abort = new AbortController();
+    setBusy(true);
+    setError("");
+    setAlbum(null);
+    async function load() {
+      if (query) {
+        const data = await api<{
+          albums: Album[];
+          tracks: Track[];
+          has_more: boolean;
+        }>(
+          `/navidrome/search?query=${encodeURIComponent(query)}&offset=${offset}`,
+          "GET",
+          undefined,
+          abort.signal,
+        );
+        setAlbums(data.albums);
+        setTracks(data.tracks);
+        setHasMore(data.has_more);
+      } else if (artist) {
+        const data = await api<{ albums: Album[] }>(
+          `/navidrome/artists/${encodeURIComponent(artist.id)}`,
+          "GET",
+          undefined,
+          abort.signal,
+        );
+        setAlbums(data.albums);
+        setTracks([]);
+        setHasMore(false);
+      } else if (mode === "artists") {
+        setArtists(
+          await api<Artist[]>(
+            "/navidrome/artists",
+            "GET",
+            undefined,
+            abort.signal,
+          ),
+        );
+        setHasMore(false);
+      } else {
+        const data = await api<{ albums: Album[]; has_more: boolean }>(
+          `/navidrome/albums?offset=${offset}&size=48&sort=${sort}`,
+          "GET",
+          undefined,
+          abort.signal,
+        );
+        setAlbums(data.albums);
+        setTracks([]);
+        setHasMore(data.has_more);
+      }
+    }
+    void load()
+      .catch((e) => {
+        if (!abort.signal.aborted) setError(e.message);
+      })
+      .finally(() => {
+        if (!abort.signal.aborted) setBusy(false);
+      });
+    return () => {
+      abort.abort();
+      albumRequest.current?.abort();
+    };
+  }, [mode, sort, offset, query, artist, refresh]);
+  useEffect(() => {
+    if (!scan?.scanning) return;
+    const timer = window.setTimeout(() => {
+      void api<{ scanning: boolean; count: number }>("/navidrome/scan")
+        .then((result) => {
+          setScan(result);
+          if (!result.scanning) setRefresh((value) => value + 1);
+        })
+        .catch((e) => {
+          setError(e.message);
+          setScan(null);
+        });
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [scan]);
+  async function openAlbum(item: Album) {
+    albumRequest.current?.abort();
+    const abort = new AbortController();
+    albumRequest.current = abort;
+    setBusy(true);
+    setError("");
+    try {
+      setAlbum(
+        await api<AlbumDetail>(
+          `/navidrome/albums/${encodeURIComponent(item.id)}`,
+          "GET",
+          undefined,
+          abort.signal,
+        ),
+      );
+    } catch (e) {
+      if (!abort.signal.aborted) setError((e as Error).message);
+    } finally {
+      if (!abort.signal.aborted) setBusy(false);
+    }
+  }
+  function reset(nextMode: string) {
+    setMode(nextMode);
+    setArtist(null);
+    setAlbum(null);
+    setQuery("");
+    setSearch("");
+    setOffset(0);
+  }
+  const shownTracks = album?.tracks || tracks;
+  return (
+    <section className="view navidrome-library">
+      <div className="library-heading">
+        <div>
+          <h2>Navidrome 音乐库</h2>
+          <p>浏览服务器中的专辑与歌手，在当前播放器中收听。</p>
+        </div>
+        <div className="library-heading-actions">
+          <button
+            className="secondary"
+            onClick={() => setRefresh((value) => value + 1)}
+            disabled={busy}
+          >
+            <RefreshCw />
+            刷新
+          </button>
+          <button
+            className="secondary"
+            disabled={scanBusy || scan?.scanning}
+            onClick={() => {
+              setScanBusy(true);
+              setError("");
+              void api<{ scanning: boolean; count: number }>(
+                "/navidrome/scan",
+                "POST",
+              )
+                .then(setScan)
+                .catch((e) => setError(e.message))
+                .finally(() => setScanBusy(false));
+            }}
+          >
+            {scanBusy || scan?.scanning ? "正在扫描…" : "扫描服务器曲库"}
+          </button>
+        </div>
+      </div>
+      {scan && (
+        <p role="status" className="setting-help">
+          {scan.scanning ? "Navidrome 正在扫描" : "Navidrome 扫描已完成"}
+          {scan.count !== undefined ? `，已发现 ${scan.count} 首` : ""}
+        </p>
+      )}
+      <div className="library-toolbar">
+        <div className="library-modes">
+          <button
+            className={mode === "albums" && !query ? "active" : ""}
+            onClick={() => reset("albums")}
+          >
+            <Disc3 />
+            专辑
+          </button>
+          <button
+            className={mode === "artists" && !query ? "active" : ""}
+            onClick={() => reset("artists")}
+          >
+            <Users />
+            歌手
+          </button>
+        </div>
+        <form
+          className="library-search"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setArtist(null);
+            setOffset(0);
+            setQuery(search.trim());
+          }}
+        >
+          <Search />
+          <input
+            aria-label="搜索 Navidrome 音乐库"
+            placeholder="搜索歌曲、歌手或专辑"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="secondary"
+            disabled={busy || !search.trim()}
+          >
+            搜索
+          </button>
+        </form>
+        {!query && mode === "albums" && !artist && (
+          <select
+            aria-label="Navidrome 专辑排序"
+            value={sort}
+            onChange={(e) => {
+              setSort(e.target.value);
+              setOffset(0);
+            }}
+          >
+            <option value="newest">最近添加</option>
+            <option value="alphabeticalByName">专辑名称</option>
+            <option value="alphabeticalByArtist">歌手名称</option>
+            <option value="recent">最近播放</option>
+            <option value="starred">收藏专辑</option>
+          </select>
+        )}
+      </div>
+      {(album || artist || query) && (
+        <button
+          className="playlist-back"
+          onClick={() => {
+            if (album) setAlbum(null);
+            else reset(mode);
+          }}
+        >
+          <ArrowLeft />
+          {album ? "返回专辑列表" : "返回全部"}
+        </button>
+      )}
+      {error ? (
+        <div className="library-empty">
+          <Disc3 />
+          <h3>暂时无法读取 Navidrome</h3>
+          <p role="alert">{error}</p>
+          <button className="primary" onClick={openSettings}>
+            前往连接设置
+          </button>
+          <button
+            className="secondary"
+            onClick={() => setRefresh((value) => value + 1)}
+          >
+            重试
+          </button>
+        </div>
+      ) : busy ? (
+        <p className="library-loading" role="status">
+          正在读取 Navidrome 音乐库…
+        </p>
+      ) : (
+        <>
+          {album && (
+            <div className="nav-album-heading">
+              <Cover track={album} large />
+              <div>
+                <h3>{album.name}</h3>
+                <p>
+                  {album.artist}
+                  {album.year ? ` · ${album.year}` : ""}
+                </p>
+                <p>{album.tracks.length} 首歌曲</p>
+                <div className="management-toolbar">
+                  <button
+                    className="primary"
+                    disabled={!album.tracks.length}
+                    onClick={() => play(album.tracks[0])}
+                  >
+                    <Play />
+                    播放
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={!album.tracks.length}
+                    onClick={() => queue(album.tracks)}
+                  >
+                    <Plus />
+                    全部加入待播
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {!album && artist && <h3>{artist.name}的专辑</h3>}
+          {!album && query && <h3>“{query}”的搜索结果</h3>}
+          {shownTracks.length > 0 && (
+            <div className="music-table-wrap">
+              <table className="music-table">
+                <thead>
+                  <tr>
+                    <th>歌曲</th>
+                    <th className="library-artist">歌手</th>
+                    <th className="library-album">专辑</th>
+                    <th>时长</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shownTracks.map((track) => (
+                    <tr key={track.id}>
+                      <td>
+                        <div className="library-song">
+                          <Cover track={track} />
+                          <span>
+                            <strong>{track.title}</strong>
+                            <small>{track.artist}</small>
+                          </span>
+                        </div>
+                      </td>
+                      <td className="library-artist">{track.artist}</td>
+                      <td className="library-album">{track.album}</td>
+                      <td>{clock(track.duration)}</td>
+                      <td>
+                        <div className="library-actions">
+                          <Button
+                            label={`播放 ${track.title}`}
+                            onClick={() => play(track)}
+                          >
+                            <Play />
+                          </Button>
+                          <Button
+                            label={`加入待播 ${track.title}`}
+                            onClick={() => queue([track])}
+                          >
+                            <Plus />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!album && !(mode === "artists" && !query && !artist) && (
+            <div className="saved-playlists nav-albums">
+              {albums.map((item) => (
+                <button
+                  key={item.id}
+                  className="saved-playlist"
+                  onClick={() => void openAlbum(item)}
+                >
+                  <Cover track={item} large />
+                  <strong>{item.name}</strong>
+                  <span>{item.artist || "未知歌手"}</span>
+                  <small>
+                    {item.song_count} 首{item.year ? ` · ${item.year}` : ""}
+                  </small>
+                </button>
+              ))}
+            </div>
+          )}
+          {!album && mode === "artists" && !query && !artist && (
+            <div className="nav-artists">
+              {artists.map((item) => (
+                <button
+                  className="nav-artist"
+                  key={item.id}
+                  onClick={() => {
+                    setArtist(item);
+                    setOffset(0);
+                  }}
+                >
+                  <Users />
+                  <span>
+                    <strong>{item.name}</strong>
+                    <small>{item.album_count} 张专辑</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {!album &&
+            !shownTracks.length &&
+            (mode === "artists" && !query && !artist
+              ? !artists.length
+              : !albums.length) && (
+              <div className="empty">
+                {query
+                  ? "没有匹配的歌曲或专辑，请更换搜索内容。"
+                  : "此范围还没有音乐。可先确认 Navidrome 的音乐目录并扫描曲库。"}
+              </div>
+            )}
+          {!album && !artist && (offset > 0 || hasMore) && (
+            <div className="library-pagination">
+              <button
+                className="secondary"
+                disabled={!offset}
+                onClick={() =>
+                  setOffset(Math.max(0, offset - (query ? 50 : 48)))
+                }
+              >
+                上一页
+              </button>
+              <span>第 {Math.floor(offset / (query ? 50 : 48)) + 1} 页</span>
+              <button
+                className="secondary"
+                disabled={!hasMore}
+                onClick={() => setOffset(offset + (query ? 50 : 48))}
+              >
+                下一页
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}

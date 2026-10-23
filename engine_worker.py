@@ -276,7 +276,9 @@ def _download(input_path, output_path):
         files = [str(Path(item.save_path).resolve()) for item in completed]
         if not all(Path(p).is_file() and Path(p).stat().st_size for p in files):
             raise RuntimeError('原音源下载器返回的文件不存在或为空')
-        state.update(status='complete', files=files, bytes=sum(Path(p).stat().st_size for p in files), detail='已由原音源下载器保存')
+        from metadata_scraper import from_song
+        state.update(status='complete', files=files, metadata=[from_song(item) for item in completed],
+                     bytes=sum(Path(p).stat().st_size for p in files), detail='已由原音源下载器保存')
     except Exception as error:
         # Avoid exposing signed URLs or account material through progress APIs.
         original.pushlog('error', f'原引擎下载失败\n{traceback.format_exc()}')

@@ -230,6 +230,55 @@ try {
     callback_url: "",
   };
   let botSaves = 0;
+  let libraryConfig = {
+    auto_scrape: false,
+    auto_organize: false,
+    library_dir: "library",
+    file_root: "/music",
+    folder_template: "{album_artist}/{album}",
+    filename_template: "{track_number} - {title}",
+    sources: ["netease", "qq"],
+    overwrite: false,
+    lyrics_mode: "both",
+    cover_mode: "both",
+    fields: [
+      "title",
+      "artist",
+      "album",
+      "album_artist",
+      "date",
+      "track_number",
+      "disc_number",
+      "genre",
+      "composer",
+      "comment",
+    ],
+    backup_days: 7,
+    navidrome: {
+      enabled: false,
+      url: "",
+      username: "",
+      auto_scan: false,
+      has_password: false,
+      has_api_key: false,
+    },
+  };
+  const libraryJobs = [];
+  const remoteTrack = {
+    ...localTrack,
+    id: "navidrome-s",
+    source: "navidrome",
+    title: "远程歌曲",
+    playback: { ...localTrack.playback, url: "/api/navidrome/stream/s" },
+  };
+  const remoteAlbum = {
+    id: "album-a",
+    name: "远程专辑",
+    artist: "远程歌手",
+    year: 2026,
+    song_count: 1,
+    cover: `${base}/test-cover.svg`,
+  };
   const botTests = [];
   const searchRequests = [],
     cancelledSearches = [],
@@ -242,6 +291,85 @@ try {
     let result;
     if (p === "/auth/status") result = { authenticated: true, required: false };
     else if (p === "/auth/logout") result = { success: true };
+    else if (p === "/library/settings") {
+      if (method === "PUT")
+        libraryConfig = { ...libraryConfig, ...request.postDataJSON() };
+      result = libraryConfig;
+    } else if (p === "/library/navidrome") {
+      const { password, api_key, ...settings } = request.postDataJSON();
+      libraryConfig.navidrome = {
+        ...libraryConfig.navidrome,
+        ...settings,
+        has_password: !!password,
+        has_api_key: !!api_key,
+      };
+      result = libraryConfig.navidrome;
+    } else if (p === "/library/jobs") {
+      if (method === "POST") {
+        const body = request.postDataJSON();
+        const before = {
+          title: localTrack.title,
+          artist: localTrack.artist,
+          album: localTrack.album,
+        };
+        result = {
+          id: `library-${libraryJobs.length}`,
+          action: body.action,
+          status: "ready",
+          detail: "检查完成，请预览修改后应用",
+          created_at: 1792700000,
+          total: 1,
+          warnings: [],
+          items: [
+            {
+              id: "local-fixture",
+              name: "测试音乐.wav",
+              path: "fixture-a.wav",
+              original_path: "/music/通勤/测试音乐.wav",
+              target:
+                body.action === "edit"
+                  ? "/music/通勤/测试音乐.wav"
+                  : "/music/library/本地歌手/本地专辑/修改后的本地歌曲.wav",
+              before,
+              after: { ...before, ...body.changes },
+              status: "ready",
+              candidates: [],
+              chosen: null,
+              locks: [],
+              warnings: [],
+            },
+          ],
+        };
+        libraryJobs.unshift(result);
+      } else result = { jobs: libraryJobs, has_more: false };
+    } else if (p.startsWith("/library/jobs/")) {
+      const job = libraryJobs.find((job) => job.id === p.split("/")[3]);
+      if (p.endsWith("/apply")) {
+        job.status = "complete";
+        job.detail = "已入库 1 首";
+        job.items[0].status = "complete";
+        job.items[0].operation_id = "op";
+      }
+      if (p.endsWith("/restore")) {
+        job.status = "restored";
+        job.detail = "已恢复原文件、标签和目录";
+        job.items[0].status = "restored";
+      }
+      result = job;
+    } else if (p === "/navidrome/albums" || p === "/navidrome/artists/artist-a")
+      result = { albums: [remoteAlbum], has_more: false };
+    else if (p === "/navidrome/albums/album-a")
+      result = { ...remoteAlbum, tracks: [remoteTrack] };
+    else if (p === "/navidrome/artists")
+      result = [{ id: "artist-a", name: "远程歌手", album_count: 1 }];
+    else if (p === "/navidrome/search")
+      result = {
+        albums: [remoteAlbum],
+        tracks: [remoteTrack],
+        has_more: false,
+      };
+    else if (p === "/navidrome/test") result = { ok: true, version: "0.60.0" };
+    else if (p === "/navidrome/scan") result = { scanning: false, count: 1 };
     else if (p === "/bots/config") {
       if (method === "PUT") {
         botSaves++;
@@ -306,7 +434,13 @@ try {
       if (method === "PUT")
         playlist = request
           .postDataJSON()
-          .map((id) => (id === localTrack.id ? localTrack : track));
+          .map((id) =>
+            id === localTrack.id
+              ? localTrack
+              : id === remoteTrack.id
+                ? remoteTrack
+                : track,
+          );
       result = method === "PUT" ? { saved: true } : playlist;
     } else if (p === "/playlist/import") {
       const input = request.postDataJSON();
@@ -447,7 +581,11 @@ try {
     else if (p.endsWith("/playback") || p.endsWith("/versions")) {
       if (p.endsWith("/versions")) versionRequests++;
       result = p.includes("local-fixture") ? localTrack : track;
-    } else if (p.startsWith("/stream/") || p === "/files/audio") {
+    } else if (
+      p.startsWith("/stream/") ||
+      p.startsWith("/navidrome/stream/") ||
+      p === "/files/audio"
+    ) {
       await route.fulfill({
         status: 200,
         contentType: "audio/wav",
@@ -734,7 +872,7 @@ try {
   await expect(page.getByRole("dialog")).toContainText("音乐文件会保留");
   await page.getByRole("button", { name: "确认操作", exact: true }).click();
   await expect(page.locator(".download-row")).toHaveCount(0);
-  await page.getByRole("button", { name: "音乐文件", exact: true }).click();
+  await page.getByRole("button", { name: "音乐库", exact: true }).click();
   await expect(page.locator(".music-table tbody tr")).toHaveCount(1);
   await expect(page.getByText("本地测试音乐", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "通勤", exact: true }).click();
@@ -757,6 +895,11 @@ try {
   await page.getByLabel("搜索音乐文件").fill("音乐");
   await expect(page.locator(".music-table tbody tr")).toHaveCount(1);
   await page.getByLabel("全选音乐文件").check();
+  const clearNotice = async () => {
+    const close = page.getByLabel("关闭提示", { exact: true });
+    if (await close.count()) await close.click();
+  };
+  await clearNotice();
   await page.screenshot({ path: "../output/test-ui-file-management.png" });
   const localDuration = await page
     .locator(".music-table tbody .library-duration")
@@ -776,6 +919,88 @@ try {
     path: "../output/test-ui-file-management-mobile.png",
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByLabel("更多音乐管理操作").selectOption("edit");
+  await expect(
+    page.getByRole("dialog", { name: "编辑选中歌曲" }),
+  ).toBeVisible();
+  await page.getByText("修改曲序", { exact: true }).click();
+  await page.getByLabel("批量曲序", { exact: true }).fill("03");
+  await page.getByText("修改发行日期", { exact: true }).click();
+  await page.getByLabel("批量发行日期", { exact: true }).fill("2026-10-23");
+  const batchCheckbox = await page
+    .locator('.library-batch-edit input[type="checkbox"]')
+    .first()
+    .boundingBox();
+  assert.ok(
+    batchCheckbox.width <= 20,
+    "batch checkboxes retain compact sizing",
+  );
+  await page.screenshot({ path: "../output/test-ui-library-batch-editor.png" });
+  await page.getByRole("button", { name: "预览修改", exact: true }).click();
+  await expect(page.locator(".tag-diff")).toContainText("2026-10-23");
+  assert.equal(libraryJobs[0].status, "ready");
+  await page.screenshot({ path: "../output/test-ui-library-tag-diff.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: "../output/test-ui-library-tag-diff-mobile.png",
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByRole("button", { name: "整理目录", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "应用已确认的更改", exact: true }),
+  ).toBeVisible();
+  assert.equal(
+    libraryJobs[0].status,
+    "ready",
+    "preview does not auto apply manual operations",
+  );
+  await expect(page.locator(".processing-paths")).toContainText(
+    "/music/library/",
+  );
+  await page.screenshot({ path: "../output/test-ui-library-preview.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.screenshot({
+    path: "../output/test-ui-library-preview-mobile.png",
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page
+    .getByRole("button", { name: "应用已确认的更改", exact: true })
+    .click();
+  await expect(page.locator(".processing-heading")).toContainText("已完成");
+  await page.locator(".restore-confirm summary").click();
+  await page
+    .getByRole("button", { name: "确认恢复本次修改", exact: true })
+    .click();
+  await expect(page.locator(".processing-heading")).toContainText("已恢复");
+  await page.getByRole("tab", { name: "Navidrome", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "远程专辑", exact: false }),
+  ).toBeVisible();
+  await page.screenshot({ path: "../output/test-ui-navidrome-albums.png" });
+  await page.getByRole("button", { name: "远程专辑", exact: false }).click();
+  await expect(page.locator(".nav-album-heading")).toContainText("远程专辑");
+  await page.getByLabel("加入待播 远程歌曲", { exact: true }).click();
+  await expect
+    .poll(() => playlist.some((item) => item.id === "navidrome-s"))
+    .toBe(true);
+  await clearNotice();
+  await page.screenshot({ path: "../output/test-ui-navidrome.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.screenshot({ path: "../output/test-ui-navidrome-mobile.png" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByLabel("全选音乐文件").check();
   await page.getByRole("button", { name: "删除选中文件", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("永久删除 1 个文件");
   await page.getByRole("button", { name: "取消", exact: true }).click();
@@ -967,6 +1192,53 @@ try {
   await page.getByLabel("下载 测试曲目", { exact: true }).click();
   await page.getByRole("dialog").getByLabel("关闭", { exact: true }).click();
   await page.getByRole("button", { name: "音源与设置", exact: true }).click();
+  await page.getByText("下载后自动刮削", { exact: true }).click();
+  await page.getByText("下载后自动整理入库", { exact: true }).click();
+  await page.getByRole("button", { name: "保存曲库设置", exact: true }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "曲库设置已保存" }),
+  ).toBeVisible();
+  assert.ok(libraryConfig.auto_scrape && libraryConfig.auto_organize);
+  await page.getByText("启用 Navidrome", { exact: true }).click();
+  await page.getByLabel(/^服务地址/).fill("http://navidrome:4533");
+  await page
+    .locator(".library-settings")
+    .getByLabel("用户名", { exact: true })
+    .fill("admin");
+  await page
+    .locator(".library-settings")
+    .getByLabel("密码", { exact: true })
+    .fill("fixture-secret");
+  await page
+    .getByRole("button", { name: "保存并测试连接", exact: true })
+    .click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "连接成功，服务器版本" }),
+  ).toBeVisible();
+  await page
+    .locator(".library-settings")
+    .screenshot({ path: "../output/test-ui-library-settings.png" });
+  await clearNotice();
+  await page.locator(".library-settings > form").first().screenshot({
+    path: "../output/test-ui-library-settings-mobile.png",
+    style: ".sidebar { visibility: hidden !important; }",
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator(".library-settings > form").first().screenshot({
+    path: "../output/test-ui-library-settings-desktop.png",
+    style: ".sidebar { visibility: hidden !important; }",
+  });
+  await page.locator(".library-settings > form").nth(1).screenshot({
+    path: "../output/test-ui-navidrome-settings.png",
+    style: ".sidebar { visibility: hidden !important; }",
+  });
+  await page.getByLabel("界面主题").selectOption("dark");
+  await page.locator(".library-settings > form").first().screenshot({
+    path: "../output/test-ui-library-settings-desktop-dark.png",
+    style: ".sidebar { visibility: hidden !important; }",
+  });
+  await page.getByLabel("界面主题").selectOption("light");
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.locator(".source-setting").first().waitFor({ state: "attached" });
   assert.equal(await page.locator(".source-setting").count(), 8);
   const sourceDisclosure = page.locator(".settings-sources .source-disclosure");
