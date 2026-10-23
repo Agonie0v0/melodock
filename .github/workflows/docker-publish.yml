@@ -1,0 +1,121 @@
+name: 发布 Docker 镜像
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 构建 ${{ matrix.arch }} 镜像
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: 登录 GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送平台镜像
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: true
+          platforms: ${{ matrix.platform }}
+          tags: ghcr.io/agonie0v0/musicdl:sha-${{ github.sha }}-${{ matrix.arch }}
+          build-args: TELEGRAM_BUILD_JOBS=4
+          cache-from: type=gha,scope=musicdl-${{ matrix.arch }}
+          cache-to: type=gha,scope=musicdl-${{ matrix.arch }},mode=max
+          provenance: mode=max
+          sbom: true
+
+  publish:
+    name: 合并并发布多架构 manifest
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: 登录 GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 合并多架构 manifest
+        run: |
+          set -eu
+          image=ghcr.io/agonie0v0/musicdl
+          source_amd64="$image:sha-${GITHUB_SHA}-amd64"
+          source_arm64="$image:sha-${GITHUB_SHA}-arm64"
+          docker buildx imagetools create \
+            -t "$image:sha-${GITHUB_SHA}" \
+            -t "$image:latest" \
+            -t "$image:${GITHUB_REF_NAME}" \
+            "$source_amd64" "$source_arm64"
+
+      - name: 验证已发布镜像可启动
+        run: |
+          for identity in 10001:10001 1026:100; do
+            runtime_uid=${identity%:*}
+            runtime_gid=${identity#*:}
+            storage=/tmp/musicdl-smoke/${runtime_uid}
+            sudo mkdir -p "$storage/data/engine" "$storage/music"
+            # Reproduce root-owned, non-writable NAS directories and old state.
+            sudo touch "$storage/data/engine/old-state"
+            sudo chmod 400 "$storage/data/engine/old-state"
+            sudo chmod 500 "$storage/data" "$storage/data/engine" "$storage/music"
+            identity_args=()
+            if [ "$runtime_uid" != 10001 ]; then
+              identity_args=(-e PUID="$runtime_uid" -e PGID="$runtime_gid")
+            fi
+            docker run -d --name musicdl-smoke -p 127.0.0.1:18765:8765 \
+              -v "$storage/data:/data" -v "$storage/music:/music" \
+              -e MUSICDL_USER=smoke -e MUSICDL_PASS=smoke-test-password \
+              "${identity_args[@]}" ghcr.io/agonie0v0/musicdl:sha-${GITHUB_SHA}
+            ready=0
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent http://127.0.0.1:18765/api/health | grep -q '"backend":"original-musicdl"'; then
+                ready=1
+                break
+              fi
+              sleep 2
+            done
+            docker logs musicdl-smoke --tail 30
+            [ "$ready" = 1 ] || exit 1
+            docker exec --user "$identity" musicdl-smoke python -c "import os; from pathlib import Path; s=Path('/proc/1/status').read_text(); assert 'Uid:\t' + '\t'.join(['$runtime_uid'] * 4) in s; assert Path('/data/musicdl.db').exists(); Path('/data/engine/old-state').write_text('repaired'); Path('/music/write-check').write_text('ok'); (Path.home() / '.cache').mkdir(parents=True, exist_ok=True); assert os.stat('/data/engine').st_mode & 0o777 == 0o700"
+            docker rm -f musicdl-smoke
+          done
