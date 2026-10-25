@@ -1,10 +1,11 @@
 import { useState, type ComponentProps } from "react";
-import { Folder, History, Library, Settings, WandSparkles } from "lucide-react";
+import { Folder, History, Library, WandSparkles } from "lucide-react";
 import { MusicLibrary } from "./MusicLibrary";
 import { NavidromeLibrary } from "./NavidromeLibrary";
 import { LibraryJobs } from "./LibraryJobs";
-import { LibrarySettings, tagLabels } from "./LibrarySettings";
+import { tagLabels } from "./LibrarySettings";
 import { LibraryWorkbench } from "./LibraryWorkbench";
+import { WorkspaceTabs } from "./WorkspaceTabs";
 import { Modal } from "./components";
 import { api } from "./api";
 import type { LibraryFile, LibraryJob } from "./types";
@@ -32,11 +33,13 @@ export type LibraryAction =
 
 export function LibraryWorkspace({
   openSettings,
+  mode,
   tab,
   setTab,
   ...props
 }: LibraryProps & {
-  openSettings: () => void;
+  openSettings: (tab: "library" | "navidrome") => void;
+  mode: "library" | "processing";
   tab: string;
   setTab: (tab: string) => void;
 }) {
@@ -128,52 +131,26 @@ export function LibraryWorkspace({
     );
     setOperation({ action, files: audio });
   }
-  const tabs = [
-    ["local", "本地音乐", Folder],
-    ["workbench", "选择与处理", WandSparkles],
-    ["jobs", "任务与审核", History],
-    ["rules", "来源与归档规则", Settings],
-    ["navidrome", "Navidrome", Library],
-  ] as const;
+  const tabs =
+    mode === "library"
+      ? ([
+          ["local", "本地音乐", Folder],
+          ["navidrome", "Navidrome", Library],
+        ] as const)
+      : ([
+          ["workbench", "选择与处理", WandSparkles],
+          ["jobs", "任务与审核", History],
+        ] as const);
+  const workspaceId = mode === "library" ? "library" : "processing";
   return (
     <>
-      <div
-        className="library-tabs"
-        role="tablist"
-        aria-label="音乐库管理"
-        onKeyDown={(e) => {
-          const index = tabs.findIndex(([id]) => id === tab);
-          const next =
-            e.key === "ArrowRight"
-              ? (index + 1) % tabs.length
-              : e.key === "ArrowLeft"
-                ? (index + tabs.length - 1) % tabs.length
-                : e.key === "Home"
-                  ? 0
-                  : e.key === "End"
-                    ? tabs.length - 1
-                    : -1;
-          if (next < 0) return;
-          e.preventDefault();
-          setTab(tabs[next][0]);
-          document.getElementById(`library-tab-${tabs[next][0]}`)?.focus();
-        }}
-      >
-        {tabs.map(([id, label, Icon]) => (
-          <button
-            key={id}
-            role="tab"
-            tabIndex={tab === id ? 0 : -1}
-            aria-selected={tab === id}
-            aria-controls={`library-panel-${id}`}
-            id={`library-tab-${id}`}
-            onClick={() => setTab(id)}
-          >
-            <Icon />
-            {label}
-          </button>
-        ))}
-      </div>
+      <WorkspaceTabs
+        id={workspaceId}
+        label={mode === "library" ? "音乐库" : "刮削整理"}
+        tabs={tabs}
+        active={tab}
+        change={setTab}
+      />
       {error && !operation && (
         <p role="alert" className="library-error">
           {error}
@@ -181,11 +158,11 @@ export function LibraryWorkspace({
       )}
       <div
         role="tabpanel"
-        id={`library-panel-${tab}`}
-        aria-labelledby={`library-tab-${tab}`}
+        id={`${workspaceId}-panel-${tab}`}
+        aria-labelledby={`${workspaceId}-tab-${tab}`}
       >
         {tab === "local" && (
-          <MusicLibrary {...props} busy={props.busy || busy} manage={manage} />
+          <MusicLibrary {...props} busy={props.busy || busy} />
         )}
         {tab === "workbench" && (
           <>
@@ -196,7 +173,7 @@ export function LibraryWorkspace({
                 ).length
               }
               busy={props.busy || busy}
-              rules={() => setTab("rules")}
+              rules={() => openSettings("library")}
               start={(action, options) =>
                 void submit(
                   action,
@@ -215,7 +192,6 @@ export function LibraryWorkspace({
             />
           </>
         )}
-        {tab === "rules" && <LibrarySettings openSources={openSettings} />}
         {tab === "jobs" && (
           <LibraryJobs focus={focus} changed={props.refresh} />
         )}
@@ -223,7 +199,7 @@ export function LibraryWorkspace({
           <NavidromeLibrary
             play={props.play}
             queue={props.queue}
-            openSettings={() => setTab("rules")}
+            openSettings={() => openSettings("navidrome")}
           />
         )}
       </div>

@@ -545,17 +545,7 @@ small,
   align-items: center;
   gap: 8px;
 }
-.theme-control {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  background: var(--surface);
-  border: 1px solid var(--line-soft);
-  box-shadow: var(--shadow-pill);
-  padding: 4px 10px;
-  border-radius: 10px;
-}
+
 select {
   background: var(--subtle);
   border: 1px solid transparent;
@@ -564,11 +554,7 @@ select {
   font-size: 12px;
   font-weight: 500;
 }
-.theme-control select {
-  border: 0;
-  background: transparent;
-  padding: 2px 4px;
-}
+
 .icon-button {
   display: inline-flex;
   justify-content: center;
@@ -3210,17 +3196,7 @@ dialog::backdrop {
   h1 {
     font-size: 20px;
   }
-  .theme-control {
-    gap: 2px;
-    padding: 4px 6px;
-  }
-  .theme-control > svg {
-    display: none;
-  }
-  .theme-control select {
-    max-width: 94px;
-    padding: 3px 0;
-  }
+
   .scope {
     display: none;
   }

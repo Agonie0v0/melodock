@@ -705,16 +705,151 @@ try {
       body: JSON.stringify(result),
     });
   });
+  const openSettings = async (tab = "音源与下载") => {
+    await page
+      .locator(".sidebar")
+      .getByRole("button", { name: "设置", exact: true })
+      .click();
+    await page.getByRole("tab", { name: tab, exact: true }).click();
+  };
+  const changeTheme = async (theme) => {
+    const active = page.locator(".sidebar .nav-item.active");
+    const name = await active.evaluate((button) => {
+      const copy = button.cloneNode(true);
+      copy.querySelector(".nav-count")?.remove();
+      return copy.textContent.trim();
+    });
+    const collection = page.locator('.collection-tabs [aria-current="page"]');
+    const subsection = (await collection.count())
+      ? await collection.textContent()
+      : null;
+    const selectedTab = page.getByRole("tab", { selected: true });
+    const tab = (await selectedTab.count())
+      ? await selectedTab.textContent()
+      : null;
+    await openSettings("外观");
+    await page.getByLabel("界面主题", { exact: true }).selectOption(theme);
+    await page
+      .locator(".sidebar")
+      .getByRole("button", { name, exact: name !== "歌单" })
+      .click();
+    if (subsection)
+      await page
+        .locator(".collection-tabs")
+        .getByRole("button", { name: subsection, exact: true })
+        .click();
+    if (tab) await page.getByRole("tab", { name: tab, exact: true }).click();
+  };
   await page.goto(base);
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForFunction(
     () => document.documentElement.dataset.theme === "dark",
   );
-  await page.getByLabel("界面主题").selectOption("light");
+  await changeTheme("light");
   await page.waitForFunction(
     () => document.documentElement.dataset.theme === "light",
   );
   await mkdir("../output", { recursive: true });
+  const sidebar = page.locator(".sidebar");
+  await expect(
+    sidebar.getByRole("button", { name: "歌单导入", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    sidebar.getByRole("button", { name: "通知与机器人", exact: true }),
+  ).toHaveCount(0);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await sidebar.getByRole("button", { name: "歌单", exact: true }).click();
+    await expect(page.locator(".collection-tabs button")).toHaveText([
+      "我的歌单 · 0",
+      "我的收藏 · 0",
+      "歌单导入",
+    ]);
+    await page.getByRole("button", { name: "歌单导入", exact: true }).click();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("歌单");
+    await expect(sidebar.locator(".nav-item.active")).toHaveText("歌单");
+    await expect(
+      page.getByRole("heading", { name: "导入平台歌单" }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: `../output/test-ui-grouped-playlists-${width}.png`,
+    });
+    await sidebar.getByRole("button", { name: "音乐库", exact: true }).click();
+    await expect(page.getByRole("tab")).toHaveText(["本地音乐", "Navidrome"]);
+    await expect(page.getByLabel("更多音乐管理操作")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "保存曲库设置", exact: true }),
+    ).toHaveCount(0);
+    await page.screenshot({
+      path: `../output/test-ui-grouped-library-${width}.png`,
+    });
+    await sidebar
+      .getByRole("button", { name: "刮削整理", exact: true })
+      .click();
+    await expect(page.getByRole("tab")).toHaveText([
+      "选择与处理",
+      "任务与审核",
+    ]);
+    await expect(
+      page.getByRole("button", { name: "保存曲库设置", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("tab", { name: "选择与处理", exact: true }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(
+      page.getByRole("tab", { name: "任务与审核", exact: true }),
+    ).toBeFocused();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      "刮削整理",
+    );
+    await sidebar.getByRole("button", { name: "音乐库", exact: true }).click();
+    await expect(
+      page.getByRole("tab", { name: "本地音乐", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await sidebar
+      .getByRole("button", { name: "刮削整理", exact: true })
+      .click();
+    await expect(
+      page.getByRole("tab", { name: "任务与审核", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
+    await page.screenshot({
+      path: `../output/test-ui-grouped-processing-${width}.png`,
+    });
+    await page
+      .getByRole("button", { name: "默认规则设置", exact: true })
+      .click();
+    await expect(page.getByRole("tab")).toHaveText([
+      "音源与下载",
+      "刮削与归档",
+      "Navidrome 连接",
+      "通知与机器人",
+      "外观",
+    ]);
+    await expect(page.getByRole("tab", { selected: true })).toHaveText(
+      "刮削与归档",
+    );
+    await expect(sidebar.locator(".nav-item.active")).toHaveText("设置");
+    await expect(page.getByText("启用 Navidrome", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(page.locator(".music-table")).toHaveCount(0);
+    await page.screenshot({
+      path: `../output/test-ui-grouped-settings-${width}.png`,
+    });
+    await page.getByRole("tab", { name: "外观", exact: true }).click();
+    await expect(page.getByLabel("界面主题", { exact: true })).toBeVisible();
+    assert.ok(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      `grouped navigation overflows at ${width}`,
+    );
+    await sidebar
+      .getByRole("button", { name: "搜索音乐", exact: true })
+      .click();
+    await expect(page.getByLabel("界面主题", { exact: true })).toHaveCount(0);
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: "../output/test-ui-home.png" });
   await page.getByLabel("搜索音乐", { exact: true }).fill("测试");
   await page.getByRole("button", { name: "搜索", exact: true }).click();
@@ -891,9 +1026,9 @@ try {
   );
   await mkdir("../output", { recursive: true });
   await page.screenshot({ path: "../output/test-ui-player.png" });
-  await page.getByLabel("界面主题").selectOption("dark");
+  await changeTheme("dark");
   await page.screenshot({ path: "../output/test-ui-player-dark.png" });
-  await page.getByLabel("界面主题").selectOption("light");
+  await changeTheme("light");
   await page.getByRole("button", { name: "收藏当前曲目", exact: true }).click();
   assert.equal(favorites.length, 1);
   await page.getByRole("button", { name: "加入播放列表", exact: true }).click();
@@ -974,11 +1109,25 @@ try {
       .locator("audio")
       .evaluate((audio) => audio.src.includes("/files/audio")),
   );
+  await expect(page.getByRole("tab")).toHaveText(["本地音乐", "Navidrome"]);
+  await expect(page.getByLabel("更多音乐管理操作")).toHaveCount(0);
+  await expect(
+    page.getByLabel("编辑歌曲 本地测试音乐", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("整理歌曲 本地测试音乐", { exact: true }).click();
+  await expect(page.locator(".sidebar .nav-item.active")).toHaveText(
+    "刮削整理",
+  );
+  await expect(page.getByRole("tab")).toHaveText(["选择与处理", "任务与审核"]);
+  await expect(page.locator(".workbench-submit")).toContainText(
+    "已选 1 首歌曲",
+  );
   await page.getByLabel("编辑歌曲 本地测试音乐", { exact: true }).click();
   await page.getByLabel("歌曲标题", { exact: true }).fill("修改后的本地歌曲");
   await page.getByRole("button", { name: "保存歌曲信息", exact: true }).click();
   await expect(page.locator(".music-table")).toContainText("修改后的本地歌曲");
-  await page.getByRole("button", { name: "播放全部", exact: true }).click();
+  await page.getByRole("button", { name: "音乐库", exact: true }).click();
+  await page.getByRole("button", { name: "播放选中", exact: true }).click();
   await page.waitForFunction(() => !document.querySelector("audio").paused);
   assert.equal(playlist[0].id, "local-fixture");
   await page.getByLabel("搜索音乐文件").fill("音乐");
@@ -1008,6 +1157,10 @@ try {
     path: "../output/test-ui-file-management-mobile.png",
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "送往刮削整理", exact: true }).click();
+  await expect(page.locator(".workbench-submit")).toContainText(
+    "已选 1 首歌曲",
+  );
   await page.getByLabel("更多音乐管理操作").selectOption("edit");
   await expect(
     page.getByRole("dialog", { name: "编辑选中歌曲" }),
@@ -1034,8 +1187,9 @@ try {
     path: "../output/test-ui-library-tag-diff-mobile.png",
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
-  await page.getByRole("button", { name: "整理目录", exact: true }).click();
+  await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
+  await page.getByLabel("本次处理", { exact: true }).selectOption("organize");
+  await page.getByRole("button", { name: "生成修改预览", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "应用已确认的更改", exact: true }),
   ).toBeVisible();
@@ -1068,6 +1222,7 @@ try {
     .click();
   await expect(page.locator(".processing-heading")).toContainText("已恢复");
   await page.getByRole("button", { name: "刮削整理", exact: true }).click();
+  await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
   await expect(page.locator(".workbench-submit")).toContainText(
     "已选 1 首歌曲",
   );
@@ -1130,7 +1285,7 @@ try {
   ).toBeVisible();
   await page.getByRole("button", { name: "待应用", exact: true }).click();
   await expect(page.locator(".processing-list-row")).toHaveCount(2);
-  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
   await page.getByLabel("全选音乐文件").check();
   await page.getByLabel("更多音乐管理操作").selectOption("rename");
   await page
@@ -1143,7 +1298,7 @@ try {
     "${counter.zfill(2)} - ${title}",
   );
   await expect(page.getByRole("link", { name: "导出处理报告" })).toBeVisible();
-  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
   await page.getByLabel("更多音乐管理操作").selectOption("duplicates");
   await page.getByLabel("检查方式", { exact: true }).selectOption("audio");
   await page.getByRole("button", { name: "预览修改", exact: true }).click();
@@ -1151,7 +1306,7 @@ try {
     "重复文件检查",
   );
   assert.equal(lastLibraryBody.duplicate_mode, "audio");
-  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
   await page.getByLabel("更多音乐管理操作").selectOption("convert");
   await page.getByLabel("输出格式", { exact: true }).selectOption("opus");
   await page.getByLabel("采样率", { exact: true }).selectOption("48000");
@@ -1170,7 +1325,7 @@ try {
     page.getByText("输出文件（原件保留）", { exact: true }),
   ).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
   await page.getByLabel("更多音乐管理操作").selectOption("split");
   await page
     .getByLabel("CUE 文本（可选）", { exact: true })
@@ -1178,7 +1333,7 @@ try {
   await page.getByRole("button", { name: "预览修改", exact: true }).click();
   await expect(page.locator(".processing-heading")).toContainText("CUE 分轨");
   assert.match(lastLibraryBody.cue, /INDEX 01/);
-  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
   await page.getByLabel("更多音乐管理操作").selectOption("clean");
   await page.getByLabel("中文转换", { exact: true }).selectOption("simplified");
   await page
@@ -1195,7 +1350,7 @@ try {
   await expect(page.locator(".processing-heading")).toBeVisible();
   assert.equal(lastLibraryBody.scope_dir, "incoming");
   assert.deepEqual(lastLibraryBody.paths, []);
-  await page.getByRole("tab", { name: "来源与归档规则", exact: true }).click();
+  await openSettings("刮削与归档");
   await page.getByText("目录监控与预处理", { exact: true }).click();
   await page.getByLabel("启用目录监控", { exact: true }).check();
   await page
@@ -1234,6 +1389,7 @@ try {
   );
   await page.screenshot({ path: "../output/test-ui-library-watch-mobile.png" });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "音乐库", exact: true }).click();
   await page.getByRole("tab", { name: "Navidrome", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "远程专辑", exact: false }),
@@ -1321,9 +1477,9 @@ try {
     .getByRole("dialog")
     .getByRole("button", { name: "取消", exact: true })
     .click();
-  await page.getByLabel("界面主题").selectOption("dark");
+  await changeTheme("dark");
   await page.screenshot({ path: "../output/test-ui-search-dark.png" });
-  await page.getByLabel("界面主题").selectOption("light");
+  await changeTheme("light");
   await page.keyboard.press("Control+k");
   await expect(page.getByLabel("搜索音乐", { exact: true })).toBeFocused();
   for (const width of [390, 768, 900, 1440]) {
@@ -1447,12 +1603,17 @@ try {
   await page.getByLabel("加入播放列表 测试曲目", { exact: true }).click();
   await page.getByLabel("下载 测试曲目", { exact: true }).click();
   await page.getByRole("dialog").getByLabel("关闭", { exact: true }).click();
-  await page.getByRole("button", { name: "音源与设置", exact: true }).click();
+  await openSettings();
   await page.getByRole("button", { name: "刮削整理", exact: true }).click();
+  await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "生成修改预览", exact: true }),
   ).toBeDisabled();
-  await page.getByRole("tab", { name: "来源与归档规则", exact: true }).click();
+  await page.getByRole("button", { name: "默认规则设置", exact: true }).click();
+  await expect(page.locator(".sidebar .nav-item.active")).toHaveText("设置");
+  await expect(page.getByRole("tab", { selected: true })).toHaveText(
+    "刮削与归档",
+  );
   await expect(page.getByText("MusicBrainz", { exact: true })).toBeVisible();
   await page.getByText("下载后自动刮削", { exact: true }).click();
   await page.getByText("下载后自动整理入库", { exact: true }).click();
@@ -1461,6 +1622,13 @@ try {
     page.getByRole("status").filter({ hasText: "曲库设置已保存" }),
   ).toBeVisible();
   assert.ok(libraryConfig.auto_scrape && libraryConfig.auto_organize);
+  await expect(page.getByText("启用 Navidrome", { exact: true })).toHaveCount(
+    0,
+  );
+  await page.getByRole("tab", { name: "Navidrome 连接", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "保存曲库设置", exact: true }),
+  ).toHaveCount(0);
   await page.getByText("启用 Navidrome", { exact: true }).click();
   await page.getByLabel(/^服务地址/).fill("http://navidrome:4533");
   await page
@@ -1490,18 +1658,18 @@ try {
     path: "../output/test-ui-library-settings-desktop.png",
     style: ".sidebar { visibility: hidden !important; }",
   });
-  await page.locator(".library-settings > form").nth(1).screenshot({
+  await page.locator(".library-settings > form").first().screenshot({
     path: "../output/test-ui-navidrome-settings.png",
     style: ".sidebar { visibility: hidden !important; }",
   });
-  await page.getByLabel("界面主题").selectOption("dark");
+  await changeTheme("dark");
   await page.locator(".library-settings > form").first().screenshot({
     path: "../output/test-ui-library-settings-desktop-dark.png",
     style: ".sidebar { visibility: hidden !important; }",
   });
-  await page.getByLabel("界面主题").selectOption("light");
+  await changeTheme("light");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "音源与设置", exact: true }).click();
+  await openSettings();
   await page.locator(".source-setting").first().waitFor({ state: "attached" });
   assert.equal(await page.locator(".source-setting").count(), 8);
   const sourceDisclosure = page.locator(".settings-sources .source-disclosure");
@@ -1635,7 +1803,7 @@ try {
     .evaluate((el) => el.getBoundingClientRect().width);
   assert.ok(numberWidth <= 216, "numeric settings remain compact");
   await expect(page.locator("footer.player")).toHaveCount(0);
-  await page.getByLabel("界面主题").selectOption("light");
+  await changeTheme("light");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.evaluate(() => scrollTo(0, 0));
   for (const width of [768, 1200, 1440, 1920, 2560]) {
@@ -1669,9 +1837,9 @@ try {
   }
   await page.setViewportSize({ width: 1920, height: 1000 });
   await page.screenshot({ path: "../output/test-ui-settings-wide.png" });
-  await page.getByLabel("界面主题").selectOption("dark");
+  await changeTheme("dark");
   await page.screenshot({ path: "../output/test-ui-settings-dark.png" });
-  await page.getByLabel("界面主题").selectOption("light");
+  await changeTheme("light");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({
     path: "../output/test-ui-settings.png",
@@ -1694,7 +1862,7 @@ try {
     () => document.documentElement.dataset.theme === "light",
   );
   assert.ok(await page.getByText("最近搜索", { exact: true }).isVisible());
-  await page.getByLabel("界面主题").selectOption("system");
+  await changeTheme("system");
   await page.waitForFunction(
     () => document.documentElement.dataset.theme === "dark",
   );
@@ -1741,9 +1909,9 @@ try {
   await page.getByRole("button", { name: "继续更新", exact: true }).click();
   await expect(page.getByRole("log")).toContainText("网络重试");
   await page.screenshot({ path: "../output/test-ui-logs.png" });
-  await page.getByLabel("界面主题").selectOption("dark");
+  await changeTheme("dark");
   await page.screenshot({ path: "../output/test-ui-logs-dark.png" });
-  await page.getByLabel("界面主题").selectOption("light");
+  await changeTheme("light");
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(
     await page.evaluate(
@@ -1752,6 +1920,7 @@ try {
   );
   await page.screenshot({ path: "../output/test-ui-logs-mobile.png" });
   await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.locator(".sidebar").getByRole("button", { name: /^歌单/ }).click();
   await page.getByRole("button", { name: "歌单导入", exact: true }).click();
   await page.getByLabel("歌单名称（可选）").fill("通勤歌单");
   await page.getByLabel("歌单链接 / ID").fill("1234");
@@ -1774,7 +1943,7 @@ try {
   await expect(page.locator(".saved-playlist")).toContainText("晚间歌单");
   await page.screenshot({ path: "../output/test-ui-playlist-library.png" });
   await page.reload();
-  await page.getByRole("button", { name: /^收藏与歌单/ }).click();
+  await page.getByRole("button", { name: /^歌单/ }).click();
   await page
     .locator(".collection-tabs")
     .getByRole("button", { name: /^我的收藏/ })
@@ -1782,7 +1951,7 @@ try {
   await expect(page.locator(".track-table tbody tr")).toHaveCount(1);
   await expect(
     page.locator('nav[aria-label="主导航"] button.active'),
-  ).toContainText("收藏与歌单");
+  ).toContainText("歌单");
   await page
     .locator(".collection-tabs")
     .getByRole("button", { name: /^我的歌单/ })
@@ -1793,9 +1962,9 @@ try {
   await page.getByRole("button", { name: "播放全部", exact: true }).click();
   await page.waitForFunction(() => !document.querySelector("audio").paused);
   await expect(page.locator(".playlist-heading h2")).toHaveText("晚间歌单");
-  await page.getByLabel("界面主题").selectOption("dark");
+  await changeTheme("dark");
   await page.screenshot({ path: "../output/test-ui-playlist-dark.png" });
-  await page.getByLabel("界面主题").selectOption("light");
+  await changeTheme("light");
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(
     await page.evaluate(
@@ -1818,7 +1987,7 @@ try {
   await page.getByRole("button", { name: "确认删除", exact: true }).click();
   await expect(page.locator(".saved-playlist")).toHaveCount(0);
   await expect(page.locator(".library-empty")).toBeVisible();
-  await page.getByRole("button", { name: "通知与机器人", exact: true }).click();
+  await openSettings("通知与机器人");
   await expect(
     page.getByRole("button", { name: "测试 Telegram 连接", exact: true }),
   ).toBeEnabled();
@@ -1950,7 +2119,7 @@ try {
     );
     await expect(projectLink).toHaveAttribute("target", "_blank");
     const navButtons = page.locator(".sidebar-capsules .nav-item");
-    await expect(navButtons).toHaveCount(11);
+    await expect(navButtons).toHaveCount(9);
     const boxes = [];
     for (const button of await navButtons.all()) {
       await expect(button).toBeVisible();
@@ -1982,7 +2151,7 @@ try {
     fullPage: true,
   });
   await page.reload();
-  await page.getByRole("button", { name: "通知与机器人", exact: true }).click();
+  await openSettings("通知与机器人");
   await expect(page.getByLabel("启用 Telegram", { exact: true })).toBeChecked();
   await expect(
     page.getByLabel("Telegram Bot Token", { exact: true }),
@@ -2005,7 +2174,7 @@ try {
   await page.getByLabel("日志类别", { exact: true }).selectOption("playback");
   await expect(page.locator(".log-lines")).toContainText("MediaError=4");
   await page.getByRole("button", { name: "搜索音乐", exact: true }).click();
-  await page.getByLabel("界面主题").selectOption("system");
+  await changeTheme("system");
   await page.emulateMedia({ colorScheme: "light" });
   const loginAttempts = [];
   let releaseLogin;

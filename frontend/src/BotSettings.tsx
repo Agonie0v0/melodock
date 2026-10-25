@@ -339,7 +339,8 @@ export function BotSettings() {
         <p>
           从 BotFather 获取 Token。白名单填写数字用户
           ID；使用长轮询接收命令，请移除该机器人的已有 webhook。
-          项目代理地址在“音源与设置”中配置和修改，选择后与音源共用。Telegram
+          项目代理地址在“设置 →
+          音源与下载”中配置和修改，选择后与音源共用。Telegram
           文档标注云端上传上限为 50 MB，自建 Local Bot API（需以 --local
           启动）为 2000
           MB；项目不按这两个数值提前拦截，均先尝试发送，以接口实际响应为准。

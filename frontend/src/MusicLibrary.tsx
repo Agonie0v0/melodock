@@ -8,7 +8,6 @@ import {
   Download,
   Music2,
   WandSparkles,
-  FolderSync,
 } from "lucide-react";
 import { Button, Cover, Modal } from "./components";
 import { api } from "./api";
@@ -31,6 +30,7 @@ export function MusicLibrary({
   remove,
   changed,
   manage,
+  process,
   processing = false,
 }: {
   files: LibraryFile[];
@@ -47,6 +47,7 @@ export function MusicLibrary({
   changed: (file: LibraryFile) => void;
   manage?: (action: LibraryAction, files: LibraryFile[]) => void;
   processing?: boolean;
+  process?: (files: LibraryFile[]) => void;
 }) {
   const [query, setQuery] = useState("");
   const [folder, setFolder] = useState("all");
@@ -241,28 +242,18 @@ export function MusicLibrary({
                     加入待播
                   </button>
                 )}
+                {!processing && process && (
+                  <button
+                    className="secondary"
+                    disabled={!selectedTracks.length || busy}
+                    onClick={() => process(chosen)}
+                  >
+                    <WandSparkles />
+                    送往刮削整理
+                  </button>
+                )}
                 {manage && (
                   <>
-                    {!processing && (
-                      <button
-                        className="secondary"
-                        disabled={!chosen.some((file) => file.track) || busy}
-                        onClick={() => manage("both", chosen)}
-                      >
-                        <WandSparkles />
-                        刮削并整理
-                      </button>
-                    )}
-                    {!processing && (
-                      <button
-                        className="secondary"
-                        disabled={!chosen.some((file) => file.track) || busy}
-                        onClick={() => manage("organize", chosen)}
-                      >
-                        <FolderSync />
-                        整理目录
-                      </button>
-                    )}
                     <select
                       className="library-tool-select"
                       aria-label="更多音乐管理操作"
@@ -388,11 +379,17 @@ export function MusicLibrary({
                               <Plus />
                             </Button>
                             <Button
-                              label={`编辑歌曲 ${file.track.title}`}
-                              disabled={!file.editable || busy}
-                              onClick={() => edit(file)}
+                              label={
+                                processing
+                                  ? `编辑歌曲 ${file.track.title}`
+                                  : `整理歌曲 ${file.track.title}`
+                              }
+                              disabled={busy || (processing && !file.editable)}
+                              onClick={() =>
+                                processing ? edit(file) : process?.([file])
+                              }
                             >
-                              <Pencil />
+                              {processing ? <Pencil /> : <WandSparkles />}
                             </Button>
                           </>
                         )}
@@ -429,7 +426,9 @@ export function MusicLibrary({
             </div>
           )}
           <p className="management-help">
-            歌曲直接从音乐目录播放。标签编辑会写回文件；下载到本机会通过浏览器再下载一份。
+            {processing
+              ? "标签编辑会写回文件，批量处理先生成预览，再审核应用。"
+              : "歌曲直接从音乐目录播放；需要补全标签或整理目录时，可选中歌曲送往刮削整理。"}
           </p>
         </div>
       </div>

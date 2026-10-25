@@ -94,7 +94,7 @@ docker compose logs -f --tail 100
    > 注意：Docker 容器内的 `127.0.0.1` 指向容器自身，代理地址请填写宿主机局域网 IP 或旁路由 IP。
 
 ### 2. 机器人与下载通知（Telegram / 企业微信 / 飞书 / 钉钉 / Discord）
-1. 打开顶部 **通知与机器人**，填写手机或群成员可访问的 **外部访问地址**（如 `http://192.168.1.20:8765` 或 `https://music.example.com`，用于大文件超限回退签名下载链接）。
+1. 打开 **设置 → 通知与机器人**，填写手机或群成员可访问的 **外部访问地址**（如 `http://192.168.1.20:8765` 或 `https://music.example.com`，用于大文件超限回退签名下载链接）。
 2. **Telegram 机器人**：填写 [@BotFather](https://t.me/BotFather) 颁发的 `Bot Token` 与允许使用的**数字用户 ID 白名单**（多个用逗号分隔），支持未保存状态下一键测试连接。
 3. **企业微信自建应用**：填写 `CorpID`、`AgentID`、`Secret`、回调 `Token` 与 `EncodingAESKey`，并将企业微信后台接收消息地址设为 `https://你的域名/bot/wecom`（详见[进阶配置指南](docs/configuration.md#企业微信)）。
 4. **群 Webhook 通知**：在「更多下载通知渠道」中填写飞书、钉钉或 Discord 群 Webhook 地址（飞书/钉钉支持加签密钥），自动推送下载完成、失败及签名下载链接。
@@ -112,7 +112,7 @@ Telegram 官方云端 Bot API 的单文件上传上限为 **50 MB**。
 3. 复制页面中的 **`api_id`**（纯数字正整数）和 **`api_hash`**（32 位十六进制字符串）。
 
 ### 第二步：在网页中一键开启内置大文件服务
-1. 打开 **通知与机器人 → Telegram**，填好 `Bot Token`、数字用户 ID 白名单并勾选启用 Telegram。
+1. 打开 **设置 → 通知与机器人 → Telegram**，填好 `Bot Token`、数字用户 ID 白名单并勾选启用 Telegram。
 2. 勾选 **使用内置 Telegram 本地服务（大文件上传）**，填入刚才获取的 **Telegram API ID** 和 **Telegram API Hash**。
 3. 点击 **保存配置**。保存后，容器会在后台自动拉起官方 `telegram-bot-api --local` 进程并监听容器回环 `127.0.0.1:8081`（数据持久化在 `./data/telegram-bot-api`）。
 4. 保存完成后再次点击 **测试连接**，验证 `getMe` 成功后即可直接向机器人发送关键词搜歌并接收大文件音频。

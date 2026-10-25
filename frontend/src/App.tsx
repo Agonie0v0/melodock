@@ -1,6 +1,5 @@
 import { Cover, Button, Lyrics, Modal } from "./components";
-import { EngineSettings } from "./EngineSettings";
-import { BotSettings } from "./BotSettings";
+import { SettingsWorkspace, type SettingsTab } from "./SettingsWorkspace";
 import { RuntimeLogs } from "./RuntimeLogs";
 import { LibraryWorkspace } from "./LibraryWorkspace";
 import { processingLabels } from "./LibrarySettings";
@@ -30,13 +29,9 @@ import {
   Shuffle,
   Repeat,
   LogOut,
-  Sun,
-  Moon,
-  Monitor,
   History,
   ScrollText,
   Trash2,
-  Bell,
   Github,
   Eye,
   EyeOff,
@@ -66,14 +61,13 @@ const views = {
   search: ["搜索音乐", "歌曲、歌手、专辑与不同音质版本"],
   player: ["正在播放", "歌词与播放列表"],
   import: ["歌单导入", "导入后独立保存到我的歌单"],
-  playlists: ["收藏与歌单", "快速收藏喜欢的歌曲，或按主题管理歌单"],
+  playlists: ["歌单", "管理自建歌单、收藏歌曲与平台歌单导入"],
   queue: ["下载队列", "下载进度与所选音质"],
   favorites: ["我的收藏", "保存喜欢的曲目与音源"],
-  files: ["音乐库", "浏览、播放与管理本地音乐和 Navidrome"],
+  files: ["音乐库", "浏览与播放本地音乐和 Navidrome 曲库"],
   organize: ["刮削整理", "补全音乐资料、审核版本并安全归档"],
   logs: ["运行日志", "实时查看搜索、下载与报错详情"],
-  settings: ["音源与设置", "账号权限、代理与下载偏好"],
-  bots: ["通知与机器人", "企业微信应用、Telegram 与手机音乐下载链接"],
+  settings: ["设置", "音源、刮削规则、服务连接与界面偏好"],
 } as const;
 type View = keyof typeof views;
 const bytes = (n: number) =>
@@ -141,6 +135,13 @@ export function App() {
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [libraryTab, setLibraryTab] = useState("local");
+  const [processingTab, setProcessingTab] = useState("workbench");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("engine");
+  const collectionView = ["playlists", "favorites", "import"].includes(view);
+  function openSettings(tab: SettingsTab = "engine") {
+    setSettingsTab(tab);
+    setView("settings");
+  }
   const [managing, setManaging] = useState(false);
   const [managementError, setManagementError] = useState("");
   const [confirmation, setConfirmation] = useState<{
@@ -1308,7 +1309,6 @@ export function App() {
                   "search",
                   "player",
                   "playlists",
-                  "import",
                   "queue",
                   "files",
                   "organize",
@@ -1319,7 +1319,6 @@ export function App() {
                   Search,
                   Music2,
                   ListMusic,
-                  Plus,
                   Download,
                   Folder,
                   WandSparkles,
@@ -1328,17 +1327,14 @@ export function App() {
                 return (
                   <button
                     key={name}
-                    className={`nav-item ${view === name || (name === "playlists" && view === "favorites") ? "active" : ""}`}
+                    className={`nav-item ${view === name || (name === "playlists" && collectionView) ? "active" : ""}`}
                     aria-current={
-                      view === name ||
-                      (name === "playlists" && view === "favorites")
+                      view === name || (name === "playlists" && collectionView)
                         ? "page"
                         : undefined
                     }
                     onClick={() => {
                       setView(name);
-                      if (name === "files") setLibraryTab("local");
-                      if (name === "organize") setLibraryTab("workbench");
                       setSourceFilter("all");
                       setSelected(new Set());
                     }}
@@ -1366,13 +1362,6 @@ export function App() {
               })}
             </nav>
             <div className="sidebar-bottom">
-              <button
-                className={`nav-item ${view === "bots" ? "active" : ""}`}
-                onClick={() => setView("bots")}
-              >
-                <Bell />
-                <span>通知与机器人</span>
-              </button>
               {current && (
                 <button
                   className="sidebar-record"
@@ -1388,10 +1377,11 @@ export function App() {
               )}
               <button
                 className={`nav-item ${view === "settings" ? "active" : ""}`}
+                aria-current={view === "settings" ? "page" : undefined}
                 onClick={() => setView("settings")}
               >
                 <Settings />
-                音源与设置
+                设置
               </button>
               <div className="user">
                 <span className="avatar">
@@ -1420,11 +1410,11 @@ export function App() {
           </div>
         </aside>
         <main className="workspace">
-          {view !== "search" && view !== "favorites" && (
+          {view !== "search" && (
             <header className="top">
               <div>
-                <h1>{views[view][0]}</h1>
-                <p>{views[view][1]}</p>
+                <h1>{collectionView ? views.playlists[0] : views[view][0]}</h1>
+                <p>{collectionView ? views.playlists[1] : views[view][1]}</p>
               </div>
               <div className="top-actions">
                 <a
@@ -1437,32 +1427,21 @@ export function App() {
                 >
                   <Github aria-hidden="true" />
                 </a>
-                <label className="theme-control">
-                  {theme === "system" ? (
-                    <Monitor />
-                  ) : theme === "dark" ? (
-                    <Moon />
-                  ) : (
-                    <Sun />
-                  )}
-                  <select
-                    aria-label="界面主题"
-                    value={theme}
-                    onChange={(e) => setTheme(e.target.value as typeof theme)}
-                  >
-                    <option value="system">跟随系统</option>
-                    <option value="light">浅色</option>
-                    <option value="dark">深色</option>
-                  </select>
-                </label>
               </div>
             </header>
           )}
-          {(view === "playlists" || view === "favorites") && (
-            <nav
-              className="library-tabs collection-tabs"
-              aria-label="收藏与歌单"
-            >
+          {collectionView && (
+            <nav className="library-tabs collection-tabs" aria-label="歌单分类">
+              <button
+                aria-current={view === "playlists" ? "page" : undefined}
+                onClick={() => {
+                  setView("playlists");
+                  setSelected(new Set());
+                }}
+              >
+                <ListMusic />
+                我的歌单 · {savedPlaylists.length}
+              </button>
               <button
                 aria-current={view === "favorites" ? "page" : undefined}
                 onClick={() => {
@@ -1475,14 +1454,11 @@ export function App() {
                 我的收藏 · {favorites.length}
               </button>
               <button
-                aria-current={view === "playlists" ? "page" : undefined}
-                onClick={() => {
-                  setView("playlists");
-                  setSelected(new Set());
-                }}
+                aria-current={view === "import" ? "page" : undefined}
+                onClick={() => setView("import")}
               >
-                <ListMusic />
-                我的歌单 · {savedPlaylists.length}
+                <Plus />
+                歌单导入
               </button>
             </nav>
           )}
@@ -1490,63 +1466,45 @@ export function App() {
             <section className="view search-view">
               <div className="search-grid">
                 <div className="result-column">
-                  <header className="top">
-                    <div>
-                      <h1>{views[view][0]}</h1>
-                      <p>{views[view][1]}</p>
-                    </div>
-                    <div className="top-actions">
-                      <a
-                        className="icon-button project-link"
-                        href="https://github.com/Agonie0v0/musicdl"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label="项目地址（在新标签页打开）"
-                        title="GitHub 项目地址"
-                      >
-                        <Github aria-hidden="true" />
-                      </a>
-                      <label className="theme-control">
-                        {theme === "system" ? (
-                          <Monitor />
-                        ) : theme === "dark" ? (
-                          <Moon />
-                        ) : (
-                          <Sun />
+                  {view === "search" && (
+                    <header className="top">
+                      <div>
+                        <h1>{views[view][0]}</h1>
+                        <p>{views[view][1]}</p>
+                      </div>
+                      <div className="top-actions">
+                        <a
+                          className="icon-button project-link"
+                          href="https://github.com/Agonie0v0/musicdl"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="项目地址（在新标签页打开）"
+                          title="GitHub 项目地址"
+                        >
+                          <Github aria-hidden="true" />
+                        </a>
+                        {searching && (
+                          <button
+                            className="secondary"
+                            onClick={() => {
+                              searchGeneration.current++;
+                              eventSource.current?.close();
+                              if (searchJob.current)
+                                void api(
+                                  `/search/jobs/${searchJob.current}`,
+                                  "DELETE",
+                                ).catch(fail);
+                              searchJob.current = null;
+                              eventSource.current = null;
+                              setSearching(false);
+                            }}
+                          >
+                            停止搜索
+                          </button>
                         )}
-                        <select
-                          aria-label="界面主题"
-                          value={theme}
-                          onChange={(e) =>
-                            setTheme(e.target.value as typeof theme)
-                          }
-                        >
-                          <option value="system">跟随系统</option>
-                          <option value="light">浅色</option>
-                          <option value="dark">深色</option>
-                        </select>
-                      </label>
-                      {searching && (
-                        <button
-                          className="secondary"
-                          onClick={() => {
-                            searchGeneration.current++;
-                            eventSource.current?.close();
-                            if (searchJob.current)
-                              void api(
-                                `/search/jobs/${searchJob.current}`,
-                                "DELETE",
-                              ).catch(fail);
-                            searchJob.current = null;
-                            eventSource.current = null;
-                            setSearching(false);
-                          }}
-                        >
-                          停止搜索
-                        </button>
-                      )}
-                    </div>
-                  </header>
+                      </div>
+                    </header>
+                  )}
                   {view === "search" && (
                     <>
                       <form
@@ -1587,7 +1545,7 @@ export function App() {
                         <button
                           type="button"
                           className="scope"
-                          onClick={() => setView("settings")}
+                          onClick={() => openSettings()}
                         >
                           音源设置
                         </button>
@@ -2414,14 +2372,15 @@ export function App() {
           )}
           {(view === "files" || view === "organize") && (
             <LibraryWorkspace
-              tab={libraryTab}
-              setTab={(tab) => {
-                setLibraryTab(tab);
-                setView(
-                  ["local", "navidrome"].includes(tab) ? "files" : "organize",
-                );
+              mode={view === "files" ? "library" : "processing"}
+              tab={view === "files" ? libraryTab : processingTab}
+              setTab={view === "files" ? setLibraryTab : setProcessingTab}
+              openSettings={openSettings}
+              process={(items) => {
+                setSelectedFiles(items.map((file) => file.path));
+                setProcessingTab("workbench");
+                setView("organize");
               }}
-              openSettings={() => setView("settings")}
               files={files}
               selected={selectedFiles}
               setSelected={setSelectedFiles}
@@ -2475,16 +2434,16 @@ export function App() {
             />
           )}
           {view === "settings" && config && (
-            <section className="view">
-              <EngineSettings sources={sources} saved={load} />
-            </section>
+            <SettingsWorkspace
+              sources={sources}
+              saved={load}
+              tab={settingsTab}
+              setTab={setSettingsTab}
+              theme={theme}
+              setTheme={setTheme}
+            />
           )}
           {view === "logs" && <RuntimeLogs active={!loginRequired} />}
-          {view === "bots" && (
-            <section className="view">
-              <BotSettings />
-            </section>
-          )}
         </main>
       </div>
       {notice && (

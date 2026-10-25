@@ -40,7 +40,7 @@ export function LibraryWorkbench({
           </p>
         </div>
         <button className="secondary" onClick={rules}>
-          来源与归档规则 <ArrowRight />
+          默认规则设置 <ArrowRight />
         </button>
       </div>
       <ol className="library-steps" aria-label="整理流程">
@@ -97,6 +97,7 @@ export function LibraryWorkbench({
             <label>
               本次处理
               <select
+                aria-label="本次处理"
                 value={action}
                 disabled={busy}
                 onChange={(e) => setAction(e.target.value as typeof action)}
@@ -177,7 +178,8 @@ export function LibraryWorkbench({
             )}
           </div>
           <p className="setting-help">
-            这里只调整本次任务。自动下载处理、补全字段、歌词封面和目录模板在“来源与归档规则”中设置。
+            这里只调整本次任务。自动下载处理、补全字段、歌词封面和目录模板统一在“设置
+            → 刮削与归档”中配置。
           </p>
         </>
       )}
