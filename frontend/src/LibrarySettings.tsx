@@ -15,6 +15,13 @@ export const tagLabels: Record<string, string> = {
   genre: "流派",
   composer: "作曲",
   comment: "备注",
+  lyricist: "作词",
+  language: "语言",
+  copyright: "版权",
+  publisher: "发行商",
+  grouping: "分组",
+  bpm: "BPM",
+  isrc: "ISRC",
 };
 export const processingLabels: Record<string, string> = {
   queued: "等待处理",
@@ -33,7 +40,67 @@ export const processingLabels: Record<string, string> = {
   restored: "已恢复",
 };
 
-export function LibrarySettings() {
+export function MetadataSources({
+  config,
+  change,
+  disabled = false,
+}: {
+  config: LibraryConfig;
+  change: (sources: string[]) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <fieldset className="library-fieldset metadata-sources">
+      <legend>刮削资料来源</legend>
+      <p className="setting-help">
+        下载来源信息优先保留，再从所选来源查找候选。下载音源开关与刮削来源独立；每首歌可获得的字段以候选实际返回为准。
+      </p>
+      <div className="metadata-source-list">
+        {config.metadata_sources?.map((source) => (
+          <div className="metadata-source" key={source.id}>
+            <label className="check-label">
+              <input
+                type="checkbox"
+                disabled={disabled}
+                checked={config.sources.includes(source.id)}
+                onChange={(e) =>
+                  change(
+                    e.target.checked
+                      ? [...config.sources, source.id]
+                      : config.sources.filter((id) => id !== source.id),
+                  )
+                }
+              />
+              <strong>{source.label}</strong>
+            </label>
+            <div>
+              <p>{source.description}</p>
+              <small>
+                {source.fields
+                  .map((field) =>
+                    field === "cover"
+                      ? "封面"
+                      : field === "lyrics"
+                        ? "歌词"
+                        : tagLabels[field] || field,
+                  )
+                  .join(" · ")}
+              </small>
+              <small>
+                {source.note}{" "}
+                <a href={source.url} target="_blank" rel="noreferrer">
+                  来源网站
+                </a>
+              </small>
+            </div>
+          </div>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+export function LibrarySettings({ openSources }: { openSources?: () => void }) {
   const [config, setConfig] = useState<LibraryConfig | null>(null);
   const [password, setPassword] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -42,6 +109,8 @@ export function LibrarySettings() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [navMessage, setNavMessage] = useState("");
+  const [acoustidKey, setAcoustidKey] = useState("");
+  const [watchStatus, setWatchStatus] = useState("");
   const load = () =>
     api<LibraryConfig>("/library/settings")
       .then(setConfig)
@@ -72,14 +141,19 @@ export function LibrarySettings() {
     setError("");
     setMessage("");
     try {
-      const { navidrome: _nav, file_root: _root, ...settings } = config;
+      const {
+        navidrome: _nav,
+        file_root: _root,
+        metadata_sources: _sources,
+        ...settings
+      } = config;
       const saved = await api<LibraryConfig>(
         "/library/settings",
         "PUT",
         settings,
       );
       setConfig(saved);
-      setMessage("曲库设置已保存，新下载任务将按此规则处理。");
+      setMessage("曲库设置已保存，后续新建任务将使用这些默认规则。");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -131,7 +205,9 @@ export function LibrarySettings() {
         <div className="library-section-title">
           <div>
             <h2>刮削、整理与入库</h2>
-            <p>下载完成后按规则补全资料、整理文件，并加入本地音乐库。</p>
+            <p>
+              设置默认刮削来源、字段与归档规则，供自动下载处理和手动任务使用。
+            </p>
           </div>
         </div>
         <div className="library-switches">
@@ -232,35 +308,163 @@ export function LibrarySettings() {
             </select>
           </label>
         </div>
-        <fieldset className="library-fieldset">
-          <legend>刮削来源</legend>
-          <div className="library-checks">
-            {[
-              ["netease", "网易云"],
-              ["qq", "QQ音乐"],
-            ].map(([id, label]) => (
-              <label className="check-label" key={id}>
-                <input
-                  type="checkbox"
-                  checked={config.sources.includes(id)}
-                  onChange={(e) =>
-                    update(
-                      "sources",
-                      e.target.checked
-                        ? [...config.sources, id]
-                        : config.sources.filter((v) => v !== id),
-                    )
-                  }
-                />
-                {label}
-              </label>
-            ))}
-          </div>
+        <MetadataSources
+          config={config}
+          change={(sources) => update("sources", sources)}
+          disabled={!!busy}
+        />
+        <details className="library-advanced">
+          <summary>目录监控与预处理</summary>
           <p className="setting-help">
-            复用下方音源的
-            Cookie、代理与请求设置。下载来源已明确时优先使用原始信息。
+            持续检查新文件，等待文件稳定后生成刮削任务。处理规则使用已保存的设置；音乐库目录与监控目录需分开。
           </p>
-        </fieldset>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={config.watch_enabled || false}
+              onChange={(e) => update("watch_enabled", e.target.checked)}
+            />
+            启用目录监控
+          </label>
+          <div className="settings-grid">
+            <label>
+              监控目录（每行一个）
+              <textarea
+                rows={3}
+                aria-label="监控目录（每行一个）"
+                value={(config.watch_dirs || ["incoming"]).join("\n")}
+                onChange={(e) =>
+                  update("watch_dirs", e.target.value.split("\n"))
+                }
+              />
+              <small>
+                相对路径位于音乐根目录内，也可填写已挂载目录的绝对路径。
+              </small>
+            </label>
+            <label>
+              检查间隔（秒）
+              <input
+                type="number"
+                min={10}
+                max={86400}
+                value={config.watch_interval ?? 180}
+                onChange={(e) =>
+                  update("watch_interval", Number(e.target.value))
+                }
+              />
+            </label>
+            <label>
+              未匹配/失败文件目录（可选）
+              <input
+                value={config.watch_failure_dir || ""}
+                aria-label="未匹配/失败文件目录（可选）"
+                onChange={(e) => update("watch_failure_dir", e.target.value)}
+                placeholder="例如 review；留空保留原处"
+              />
+              <small>须与监控目录、最终音乐库分开。转移也保留恢复记录。</small>
+            </label>
+            <label>
+              文件稳定等待（秒）
+              <input
+                type="number"
+                min={2}
+                max={3600}
+                value={config.watch_stable_seconds ?? 30}
+                onChange={(e) =>
+                  update("watch_stable_seconds", Number(e.target.value))
+                }
+              />
+            </label>
+            <label>
+              监控处理方式
+              <select
+                value={config.watch_action || "both"}
+                onChange={(e) => update("watch_action", e.target.value)}
+              >
+                <option value="both">刮削并整理入库</option>
+                <option value="scrape">只刮削资料</option>
+                <option value="organize">只整理目录</option>
+              </select>
+            </label>
+            <label>
+              中文预处理
+              <select
+                value={config.chinese || "none"}
+                onChange={(e) => update("chinese", e.target.value)}
+              >
+                <option value="none">保留原文</option>
+                <option value="simplified">繁体转简体</option>
+                <option value="traditional">简体转繁体</option>
+              </select>
+            </label>
+          </div>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={config.repair_encoding || false}
+              onChange={(e) => update("repair_encoding", e.target.checked)}
+            />
+            修复 UTF-8 被按 Latin1 误读的乱码
+          </label>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={config.watch_apply ?? true}
+              onChange={(e) => update("watch_apply", e.target.checked)}
+            />
+            自动应用可靠匹配；关闭时所有监控任务先等待审核
+          </label>
+          <div className="management-toolbar">
+            <button
+              type="button"
+              className="secondary"
+              disabled={!!busy}
+              onClick={async () => {
+                setBusy("watch");
+                setError("");
+                try {
+                  const result = await api<{ detail: string }>(
+                    "/library/watch/scan",
+                    "POST",
+                  );
+                  setWatchStatus(result.detail);
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setBusy("");
+                }
+              }}
+            >
+              检查已保存的监控目录
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={async () => {
+                try {
+                  const result = await api<{
+                    detail?: string;
+                    error?: string;
+                    checked_at?: number;
+                  }>("/library/watch");
+                  setWatchStatus(
+                    `${result.checked_at ? new Date(result.checked_at * 1000).toLocaleString("zh-CN") + " · " : ""}${result.error || result.detail || "尚未检查"}`,
+                  );
+                } catch (e) {
+                  setError((e as Error).message);
+                }
+              }}
+            >
+              查看监控状态
+            </button>
+          </div>
+          {watchStatus && <p role="status">{watchStatus}</p>}
+        </details>
+        {openSources && (
+          <button className="secondary" type="button" onClick={openSources}>
+            配置平台 Cookie 与代理
+          </button>
+        )}
         <details className="library-advanced">
           <summary>字段与覆盖规则</summary>
           <fieldset className="library-fieldset">
@@ -298,7 +502,9 @@ export function LibrarySettings() {
             {Object.keys(tagLabels)
               .map((key) => `{${key}}`)
               .join("、")}
-            。相同文件名保留双方。
+            {
+              "。同时支持 ${albumartist}、${first_artist}、${first_artist_letter}、${year}、${counter} 和条件、zfill、replace、split 等表达式。相同文件名保留双方。"
+            }
           </p>
         </details>
         <div className="management-toolbar">
@@ -313,6 +519,68 @@ export function LibrarySettings() {
             <span role="status">请选择至少一个刮削来源。</span>
           )}
           {message && <span role="status">{message}</span>}
+        </div>
+      </form>
+      <form
+        className="settings-section"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy("acoustid");
+          setError("");
+          try {
+            const saved = await api<{ has_acoustid_key: boolean }>(
+              "/library/credentials",
+              "PUT",
+              { acoustid_key: acoustidKey },
+            );
+            setConfig({ ...config, ...saved });
+            setAcoustidKey("");
+            setMessage("AcoustID 配置已保存。");
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setBusy("");
+          }
+        }}
+      >
+        <h2>音频指纹识别</h2>
+        <p>
+          文件名或标签缺失时，可在刮削来源中选择
+          AcoustID。识别后仍需核对具体发行版本。
+        </p>
+        <label>
+          AcoustID 应用 Key
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={acoustidKey}
+            onChange={(e) => setAcoustidKey(e.target.value)}
+            placeholder={
+              config.has_acoustid_key
+                ? "已配置；输入新 Key 可替换"
+                : "填写 acoustid.org 申请的应用 Key"
+            }
+          />
+        </label>
+        <p className="setting-help">
+          需要服务器安装 fpcalc；Docker
+          镜像已包含。只发送指纹和时长，不上传音频。
+          <a
+            href="https://acoustid.org/new-application"
+            target="_blank"
+            rel="noreferrer"
+          >
+            申请应用 Key
+          </a>
+        </p>
+        <div className="management-toolbar">
+          <button className="primary" disabled={!!busy || !acoustidKey}>
+            保存指纹配置
+          </button>
+          <span>
+            {config.has_acoustid_key ? "Key 已配置" : "Key 未配置"} ·{" "}
+            {config.tools?.fpcalc ? "fpcalc 已找到" : "fpcalc 未找到"}
+          </span>
         </div>
       </form>
       <form

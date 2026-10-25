@@ -6,24 +6,31 @@ import json
 import os
 import re
 import shutil
-import string
 import threading
 import time
 import uuid
+import csv
+import io
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 
 import local_library
-from metadata_scraper import MetadataScraper, SOURCES, clean, pick, rank
+from metadata_scraper import MetadataScraper, SOURCE_CATALOG, LABELS, clean, pick, rank
 from navidrome import Navidrome, NavidromeSettings
+import audio_tools
+import library_rules
 
 INTERNAL_DIRS = {'.partial', '.processing', '.originals', '.musicdl-history'}
 ACTIVE = {'queued', 'identifying', 'tagging', 'organizing', 'indexing', 'restoring'}
-TEMPLATE_FIELDS = {*local_library.TAG_FIELDS, 'ext'}
+TEMPLATE_FIELDS = library_rules.VARIABLES
+Source = Literal['netease', 'qq', 'musicbrainz', 'migu', 'kugou', 'kuwo', 'acoustid']
+REPORT_ACTIONS = {'duplicates', 'quality'}
+DERIVED_ACTIONS = {'convert', 'split', 'artist_artwork'}
 
 
 def revision(path):
@@ -45,15 +52,13 @@ def safe_segment(value, fallback='未知'):
 
 
 def validate_template(value):
-    if not value or len(value) > 300 or value.startswith(('/', '\\')) or '..' in re.split(r'[/\\]', value):
+    if not value or len(value) > 1000 or value.startswith(('/', '\\')) or '..' in re.split(r'[/\\]', value):
         raise ValueError('整理模板应为音乐库内的相对路径')
     try:
-        for _, field, spec, conversion in string.Formatter().parse(value):
-            if field is not None and (field not in TEMPLATE_FIELDS or spec or conversion):
-                raise ValueError('模板只支持显示的标签变量，不支持格式表达式')
+        library_rules.render(value, dict.fromkeys(TEMPLATE_FIELDS, '1'))
     except (KeyError, ValueError):
         raise ValueError('模板格式无效或包含不支持的变量') from None
-    return value.replace('\\', '/')
+    return value
 
 
 class LibrarySettings(BaseModel):
@@ -62,12 +67,21 @@ class LibrarySettings(BaseModel):
     library_dir: str = Field(default='library', min_length=1, max_length=1000)
     folder_template: str = '{album_artist}/{album}'
     filename_template: str = '{track_number} - {title}'
-    sources: list[Literal['netease', 'qq']] = Field(default_factory=lambda: ['netease', 'qq'], max_length=2)
+    sources: list[Source] = Field(default_factory=lambda: ['netease', 'qq'], max_length=7)
     overwrite: bool = False
     lyrics_mode: Literal['both', 'embed', 'lrc', 'none'] = 'both'
     cover_mode: Literal['both', 'embed', 'file', 'none'] = 'both'
     fields: list[str] = Field(default_factory=lambda: [*local_library.TAG_FIELDS], max_length=len(local_library.TAG_FIELDS))
     backup_days: int = Field(default=7, ge=1, le=365)
+    chinese: Literal['none', 'simplified', 'traditional'] = 'none'
+    repair_encoding: bool = False
+    watch_enabled: bool = False
+    watch_dirs: list[str] = Field(default_factory=lambda: ['incoming'], max_length=20)
+    watch_interval: int = Field(default=180, ge=10, le=86400)
+    watch_stable_seconds: int = Field(default=30, ge=2, le=3600)
+    watch_action: Literal['scrape', 'organize', 'both'] = 'both'
+    watch_apply: bool = True
+    watch_failure_dir: str = Field(default='', max_length=1000)
 
     @field_validator('library_dir')
     @classmethod
@@ -84,7 +98,7 @@ class LibrarySettings(BaseModel):
     @field_validator('filename_template')
     @classmethod
     def filename(cls, value):
-        if '/' in value:
+        if '/' in library_rules.render(value, dict.fromkeys(TEMPLATE_FIELDS, '1')):
             raise ValueError('文件名模板不能包含目录分隔符')
         return value
 
@@ -97,15 +111,27 @@ class LibrarySettings(BaseModel):
 
 
 class ProcessBody(BaseModel):
-    paths: list[str] = Field(min_length=1, max_length=1000)
-    action: Literal['scrape', 'organize', 'both', 'edit', 'extract', 'clean', 'duplicates'] = 'both'
+    paths: list[str] = Field(default_factory=list, max_length=1000)
+    scope_dir: str | None = Field(default=None, max_length=1000)
+    action: Literal['scrape', 'organize', 'both', 'edit', 'extract', 'clean', 'duplicates', 'rename',
+                    'export_lyrics', 'import_lyrics', 'export_cover', 'import_cover', 'clear', 'convert', 'split', 'quality', 'artist_artwork'] = 'both'
     changes: dict[str, str] = Field(default_factory=dict)
     lyrics: str | None = Field(default=None, max_length=2_000_000)
     cover_data: str | None = Field(default=None, max_length=12_000_000)
     overwrite: bool | None = None
+    sources: list[Source] | None = Field(default=None, min_length=1, max_length=7)
     filename_order: Literal['title_artist', 'artist_title'] = 'title_artist'
     find: str = Field(default='', max_length=300)
     replacement: str = Field(default='', max_length=300)
+    chinese: Literal['none', 'simplified', 'traditional'] | None = None
+    repair_encoding: bool | None = None
+    filename_template: str | None = Field(default=None, max_length=1000)
+    extract_template: str = Field(default='', max_length=300)
+    duplicate_mode: Literal['file', 'audio', 'identity'] = 'file'
+    output_format: Literal['flac', 'mp3', 'm4a', 'opus', 'wav'] = 'flac'
+    bitrate: int | None = Field(default=None, ge=32, le=512)
+    sample_rate: Literal[0, 8000, 16000, 22050, 24000, 44100, 48000, 88200, 96000, 192000] = 0
+    cue: str = Field(default='', max_length=1_000_000)
 
     @field_validator('changes')
     @classmethod
@@ -120,6 +146,20 @@ class ApplyBody(BaseModel):
     skip: list[str] = Field(default_factory=list, max_length=1000)
 
 
+class CredentialsBody(BaseModel):
+    acoustid_key: str = Field(default='', max_length=200)
+
+
+class RestoreBody(BaseModel):
+    items: list[str] = Field(default_factory=list, max_length=1000)
+
+
+class CandidateQuery(BaseModel):
+    item: str = Field(min_length=1, max_length=100)
+    query: str = Field(min_length=1, max_length=200)
+    sources: list[Source] | None = Field(default=None, min_length=1, max_length=7)
+
+
 class LibraryPipeline:
     def __init__(self, old, db, db_lock, get, put, values, remove):
         self.old, self.db, self.db_lock = old, db, db_lock
@@ -130,6 +170,12 @@ class LibraryPipeline:
         self.futures, self.cancelled = {}, set()
         self.index_file = None
         self.scraper = MetadataScraper(lambda: self.old.manager.config)
+        self.scraper.credentials = lambda: self.get('library_setting', 'credentials', {})
+        self.watch_stop = threading.Event()
+        self.watch_wake = threading.Event()
+        self.watch_thread = None
+        self.watch_guard = threading.Lock()
+        self.watch_seen = {}
         self.navidrome = Navidrome(self.nav_settings)
         with db_lock:
             db.execute('CREATE TABLE IF NOT EXISTS library_assets(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,locks TEXT NOT NULL DEFAULT \'[]\',source TEXT NOT NULL DEFAULT \'{}\')')
@@ -145,7 +191,9 @@ class LibraryPipeline:
 
     def public_settings(self):
         nav = self.nav_settings()
-        return {**self.settings(), 'file_root': str(self.old.FILE_ROOT),
+        return {**self.settings(), 'file_root': str(self.old.FILE_ROOT), 'metadata_sources': SOURCE_CATALOG,
+                'has_acoustid_key': bool(self.scraper.credentials().get('acoustid_key') or os.getenv('MUSICDL_ACOUSTID_KEY')),
+                'tools': {tool: audio_tools.available(tool) for tool in ('ffmpeg', 'fpcalc')},
                 'navidrome': {**{k: v for k, v in nav.items() if k not in {'password', 'api_key'}},
                               'has_password': bool(nav.get('password')), 'has_api_key': bool(nav.get('api_key'))}}
 
@@ -159,6 +207,14 @@ class LibraryPipeline:
 
     def roots(self):
         return sorted(set([*self.old.manager.workdirs(), self.old.FILE_ROOT.resolve(), self.library_root()]), key=lambda p: len(p.parts), reverse=True)
+
+    def scope_root(self, directory):
+        root = Path(directory)
+        root = (root if root.is_absolute() else self.old.FILE_ROOT / root).resolve()
+        self.validate_path(root, must_exist=False)
+        if root.exists() and not root.is_dir():
+            raise HTTPException(400, '请选择目录')
+        return root
 
     def validate_path(self, path, *, internal=False, must_exist=True):
         path = Path(path)
@@ -308,7 +364,7 @@ class LibraryPipeline:
                 self.put('bot_link', link['id'], link)
 
     def target(self, path, tags, settings):
-        values = {key: safe_segment(tags.get(key), '') for key in local_library.TAG_FIELDS}
+        values = library_rules.variables(path, tags, settings.get('_counter', 1))
         values['title'] = values['title'] or safe_segment(path.stem)
         values['artist'] = values['artist'] or '未知歌手'
         values['album_artist'] = values['album_artist'] or values['artist']
@@ -316,8 +372,9 @@ class LibraryPipeline:
         values['ext'] = path.suffix.lstrip('.')
         number = re.match(r'\d+', values['track_number'])
         values['track_number'] = f'{int(number[0]):02d}' if number else ''
-        parts = [safe_segment(segment.format_map(values)) for segment in settings['folder_template'].split('/')]
-        filename = settings['filename_template'].format_map(values).strip(' -_.')
+        # Render first: expressions can contain slash literals (artist.split('/')).
+        parts = [safe_segment(segment) for segment in library_rules.render(settings['folder_template'], values, lambda v: safe_segment(v, '')).replace('\\', '/').split('/')]
+        filename = library_rules.render(settings['filename_template'], values, lambda v: safe_segment(v, '')).strip(' -_.')
         filename = re.sub(r'\s{2,}', ' ', filename)
         destination = self.library_root(settings).joinpath(*parts, safe_segment(filename, values['title']) + path.suffix.lower())
         if not destination.resolve().is_relative_to(self.library_root(settings)):
@@ -334,8 +391,45 @@ class LibraryPipeline:
         return [p for p in path.parent.iterdir() if p.stem == path.stem and p.is_file() and not p.is_symlink() and p != path
                 and p.suffix.lower() in {'.lrc', '.txt', '.jpg', '.jpeg', '.png', '.cue'}]
 
-    def submit(self, body, download_id=None, sources=None):
+    def item_target(self, path, item, job):
+        settings = {**job['settings'], '_counter': item.get('counter', 1)}
+        if job['action'] != 'rename':
+            return self.target(path, item['after'], settings)
+        name = library_rules.render(settings['filename_template'], library_rules.variables(path, item['after'], item.get('counter', 1)))
+        target = path.with_name(safe_segment(name.strip(' -_.'), path.stem) + path.suffix.lower())
+        original, count = target, 0
+        while any(target.with_suffix(p.suffix).exists() and target.with_suffix(p.suffix) != p for p in [path, *self.sidecars(path)]):
+            count += 1
+            target = original.with_stem(original.stem + f' ({count})')
+        return target
+
+    def reserve_target(self, source, target, reserved, settings):
+        suffixes = {source.suffix, *(p.suffix for p in self.sidecars(source))}
+        if settings['lyrics_mode'] in {'both', 'lrc'}: suffixes.add('.lrc')
+        if settings['cover_mode'] in {'both', 'file'}: suffixes.update({'.jpg', '.png'})
+        allowed = {source, *self.sidecars(source)}
+        original, count = target, 0
+        while any(str(target.with_suffix(suffix)) in reserved or target.with_suffix(suffix).exists() and target.with_suffix(suffix) not in allowed for suffix in suffixes):
+            count += 1
+            target = original.with_stem(original.stem + f' ({count})')
+        reserved.update(str(target.with_suffix(suffix)) for suffix in suffixes)
+        return target
+
+    def submit(self, body, download_id=None, sources=None, watch=False):
         paths = list(dict.fromkeys(body.paths))
+        if body.scope_dir is not None:
+            root = self.scope_root(body.scope_dir)
+            paths.extend(self.token(path) for path in sorted(self.scan(), key=lambda p: str(p).casefold()) if path.suffix.lower() in local_library.AUDIO_EXTENSIONS and path.is_relative_to(root))
+            paths = list(dict.fromkeys(paths))
+        if not paths or len(paths) > 1000:
+            raise HTTPException(400, '每次请选择 1 到 1000 首歌曲；大目录请分批处理')
+        if body.action in {'convert', 'split'}:
+            if body.output_format == 'opus' and body.sample_rate not in {0, 8000, 16000, 24000, 48000}:
+                raise HTTPException(400, 'Opus 请选择 8/16/24/48 kHz 或自动采样率')
+            if body.output_format == 'mp3' and body.sample_rate > 48000:
+                raise HTTPException(400, 'MP3 采样率不能超过 48 kHz')
+            if body.output_format == 'mp3' and body.bitrate and body.bitrate > 320:
+                raise HTTPException(400, 'MP3 码率不能超过 320 kbps')
         for token in paths:
             path = self.resolve(token)
             if path.suffix.lower() not in local_library.AUDIO_EXTENSIONS:
@@ -343,11 +437,28 @@ class LibraryPipeline:
         settings = self.settings()
         if body.overwrite is not None:
             settings['overwrite'] = body.overwrite
+        if body.sources is not None:
+            settings['sources'] = list(dict.fromkeys(body.sources))
+        for field in ('chinese', 'repair_encoding', 'filename_template'):
+            if getattr(body, field) is not None:
+                settings[field] = getattr(body, field)
+        if body.filename_template is not None:
+            validate_template(body.filename_template)
+        if body.action == 'rename':
+            settings['folder_template'] = '{null}'
+        if body.action in {'export_lyrics', 'import_lyrics', 'export_cover', 'import_cover', 'clear'}:
+            settings['overwrite'] = True
+        if body.action == 'export_lyrics': settings['lyrics_mode'] = 'lrc'
+        if body.action == 'import_lyrics': settings['lyrics_mode'] = 'embed'
+        if body.action == 'export_cover': settings['cover_mode'] = 'file'
+        if body.action == 'import_cover': settings['cover_mode'] = 'embed'
+        if body.action in {'scrape', 'both'} and not settings['sources']:
+            raise HTTPException(400, '请选择至少一个刮削来源')
         ident = uuid.uuid4().hex
         job = {'id': ident, 'action': body.action, 'status': 'queued', 'created_at': int(time.time()),
                'updated_at': int(time.time()), 'paths': paths, 'options': body.model_dump(exclude={'paths'}),
                'settings': settings, 'items': [], 'total': len(paths), 'processed': 0, 'detail': '等待处理',
-               'download_id': download_id, 'sources': sources or {}, 'warnings': []}
+               'download_id': download_id, 'sources': sources or {}, 'warnings': [], 'watch': watch}
         self.put('library_job', ident, job)
         self.futures[ident] = self.pool.submit(self.prepare, ident)
         return job
@@ -361,11 +472,38 @@ class LibraryPipeline:
                 download.update(processing={'id': job['id'], 'status': job['status'], 'detail': job['detail']})
                 self.put('download', download['id'], download)
 
+    def edit_tags(self, path, changes):
+        """Single-song saves use the same version journal as batch operations."""
+        with self.lock(path):
+            metadata = local_library.read_metadata(str(path), path.stat().st_mtime_ns, path.stat().st_size)
+            before = {key: metadata.get(key, '') for key in local_library.TAG_FIELDS}
+            changes = {key: value for key, value in changes.items() if value != before.get(key, '')}
+            if not changes:
+                return
+            ident = uuid.uuid4().hex
+            item = {'id': self.asset(path)['id'], 'path': self.token(path), 'name': path.name,
+                    'original_path': str(path), 'revision': revision(path), 'before': before,
+                    'after': {**before, **changes}, 'candidates': [], 'chosen': None, 'status': 'ready',
+                    'warnings': [], 'locks': self.asset(path)['locks'], 'target': str(path)}
+            job = {'id': ident, 'action': 'edit', 'status': 'tagging', 'created_at': int(time.time()),
+                   'settings': self.settings(), 'items': [item], 'total': 1, 'processed': 1,
+                   'options': {'changes': changes}, 'sources': {}, 'paths': [item['path']], 'warnings': []}
+            self.save(job, detail='正在保存单曲标签')
+            try:
+                self.publish(job, item, path, path, None, None)
+                self.lock_fields(path, changes)
+                item['status'] = 'complete'
+                self.save(job, status='complete', detail='已保存标签及原件恢复版本')
+            except Exception as error:
+                item.update(status='failed', error=self.error_message(error))
+                self.save(job, status='failed', detail=item['error'])
+                raise
+
     def prepare(self, ident):
         job = self.get('library_job', ident)
         try:
             self.save(job, status='identifying', detail='读取标签与识别歌曲')
-            hashes = {}
+            hashes, reserved = {}, set()
             for token in job['paths']:
                 if ident in self.cancelled:
                     break
@@ -377,41 +515,58 @@ class LibraryPipeline:
                     source = job['sources'].get(token) or asset['source']
                     reference = {**before, 'duration': metadata.get('duration', 0),
                                  **{key: value for key, value in source.items() if value not in (None, '')}}
+                    # Embedded/edited tags take precedence over stale download metadata.
+                    reference.update({key: before[key] for key in {*metadata.get('tagged_fields', []), *asset['locks']} if key in before})
+                    reference['duration'] = metadata.get('duration') or source.get('duration', 0)
+                    reference['_path'] = str(path)
                     item = {'id': asset['id'], 'path': self.token(path), 'name': path.name, 'original_path': str(path),
                             'revision': revision(path), 'before': before, 'after': dict(before), 'candidates': [],
                             'chosen': None, 'status': 'ready', 'warnings': [], 'locks': asset['locks'],
-                            'tagged_fields': metadata.get('tagged_fields', []), 'target': str(path)}
+                            'tagged_fields': metadata.get('tagged_fields', []), 'target': str(path), 'counter': len(job['items']) + 1}
                     try:
                         action = job['action']
+                        options, settings = job['options'], job['settings']
+                        if settings.get('chinese', 'none') != 'none' or settings.get('repair_encoding'):
+                            for key, value in before.items():
+                                if key not in item['locks']:
+                                    item['after'][key] = library_rules.transform(value, chinese=settings.get('chinese', 'none'), repair=settings.get('repair_encoding', False))
+                            reference.update({key: value for key, value in item['after'].items() if value})
                         if action == 'duplicates':
-                            value = digest(path)
+                            mode = options.get('duplicate_mode', 'file')
+                            value = audio_tools.audio_hash(path, lambda: ident in self.cancelled) if mode == 'audio' else (
+                                '|'.join([re.sub(r'\W', '', before['title'].casefold()), re.sub(r'\W', '', before['artist'].casefold()), str(round(metadata['duration']))])
+                                if mode == 'identity' and before['artist'] and metadata['duration'] else digest(path))
                             item['hash'] = value
-                            hashes.setdefault(value, []).append({'id': asset['id'], 'name': path.name, 'path': str(path)})
+                            hashes.setdefault(value, []).append({'id': asset['id'], 'name': path.name, 'path': str(path),
+                                                                 'bitrate': metadata.get('bitrate'), 'sample_rate': metadata.get('sample_rate'), 'size': path.stat().st_size})
+                        if action == 'quality':
+                            item['quality'] = audio_tools.inspect_audio(path, metadata, lambda: ident in self.cancelled)
+                            item['warnings'].extend([f'缺少{key}' for key in ('artist', 'album') if not before[key]])
                         if action in {'extract', 'clean'}:
                             if action == 'extract':
-                                pieces = re.split(r'\s+-\s+', path.stem, maxsplit=1)
-                                if len(pieces) == 2:
+                                if options.get('extract_template'):
+                                    item['after'].update(library_rules.extract(options['extract_template'], path.stem))
+                                elif len(pieces := re.split(r'\s+-\s+', path.stem, maxsplit=1)) == 2:
                                     title, artist = pieces if job['options']['filename_order'] == 'title_artist' else pieces[::-1]
                                     item['after'].update(title=title.strip(), artist=artist.strip())
                                 else:
                                     item['warnings'].append('文件名未匹配“标题 - 歌手”或“歌手 - 标题”格式')
                             else:
                                 for key, value in before.items():
-                                    value = re.sub(r'\s+', ' ', value).strip()
-                                    if job['options']['find']:
-                                        value = value.replace(job['options']['find'], job['options']['replacement'])
-                                    item['after'][key] = value
+                                    item['after'][key] = library_rules.transform(value, find=options['find'], replacement=options['replacement'],
+                                        chinese=settings.get('chinese', 'none'), repair=settings.get('repair_encoding', False))
                         if action in {'scrape', 'both'}:
                             candidates, warnings = [], []
                             if source.get('source_id') and clean(source.get('title')):
                                 candidates.append(source)
-                            if not candidates or not clean(source.get('album')) or job['settings']['overwrite']:
+                            missing = any(not clean(reference.get(field)) for field in job['settings']['fields'] if field in {'title', 'artist', 'album'})
+                            if not candidates or source.get('source') not in LABELS or missing or job['settings']['overwrite'] or not job.get('download_id'):
                                 found, warnings = self.scraper.search(reference, job['settings']['sources'])
                                 candidates.extend(found)
                             item['warnings'].extend(warnings)
                             item['candidates'], selected = pick(reference, candidates)
                             if selected:
-                                selected, warnings = self.scraper.enrich(selected, job['settings']['lyrics_mode'] != 'none')
+                                selected, warnings = self.scraper.enrich(selected, job['settings']['lyrics_mode'] != 'none', item['candidates'])
                                 item['warnings'].extend(warnings)
                                 item['candidates'] = [selected if c['id'] == selected['id'] else c for c in item['candidates']]
                                 item['chosen'] = selected['id']
@@ -420,19 +575,103 @@ class LibraryPipeline:
                                 item['status'] = 'needs_review'
                                 item['warnings'].append('无法可靠确定歌曲版本，请选择候选或保留现有标签')
                         if action == 'edit':
-                            item['after'].update(job['options']['changes'])
-                        if action in {'organize', 'both'}:
-                            item['target'] = str(self.target(path, item['after'], job['settings']))
+                            values = library_rules.variables(path, before, item['counter'], local_library.read_lyrics(path))
+                            item['after'].update({key: library_rules.render(value, values) for key, value in options['changes'].items()})
+                        if action == 'clear':
+                            item['after'] = dict.fromkeys(local_library.TAG_FIELDS, '')
+                            item['warnings'].append('将清空全部标签（含自定义标签）、内嵌歌词与封面；同名附属文件保留')
+                        if action in {'export_lyrics', 'import_lyrics'}:
+                            sidecar = path.with_suffix('.lrc')
+                            if action == 'import_lyrics' and (not sidecar.is_file() or sidecar.is_symlink()):
+                                raise ValueError('未找到同名 LRC 文件')
+                            if action == 'import_lyrics' and sidecar.stat().st_size > 8_000_000:
+                                raise ValueError('LRC 文件超过 8 MB')
+                            lyrics = local_library.read_lyrics(path, prefer_sidecar=action == 'import_lyrics')
+                            if not lyrics or len(lyrics) > 2_000_000:
+                                raise ValueError('没有可处理的歌词')
+                            item['lyrics_snapshot'] = {'sidecar': action == 'import_lyrics', 'hash': hashlib.sha256(lyrics.encode('utf-8')).hexdigest()}
+                        if action in {'export_cover', 'import_cover'}:
+                            if action == 'export_cover':
+                                picture = local_library.audio_cover(local_library.mutagen.File(path))
+                            else:
+                                cover_path = next((p for p in [path.with_suffix('.jpg'), path.with_suffix('.png'), path.parent / 'cover.jpg', path.parent / 'cover.png'] if p.is_file() and not p.is_symlink()), None)
+                                if not cover_path:
+                                    raise ValueError('未找到同名封面或目录内 cover.jpg / cover.png')
+                                if cover_path.stat().st_size > 8 * 1024 * 1024:
+                                    raise ValueError('封面超过 8 MB')
+                                picture = (cover_path.read_bytes(), 'image/png' if cover_path.suffix.lower() == '.png' else 'image/jpeg')
+                            if not picture or len(picture[0]) > 8 * 1024 * 1024:
+                                raise ValueError('没有封面或封面超过 8 MB')
+                            item['cover_snapshot'] = {'path': str(cover_path) if action == 'import_cover' else None,
+                                                      'hash': hashlib.sha256(picture[0]).hexdigest(), 'mime': picture[1]}
+                        if action in {'organize', 'both', 'rename'}:
+                            item['target'] = str(self.reserve_target(path, self.item_target(path, item, job), reserved, job['settings']))
+                        if action == 'artist_artwork':
+                            artist = before['album_artist'] or before['artist']
+                            if not artist:
+                                raise ValueError('请先填写歌手或专辑歌手；图片要求完整名称的唯一匹配')
+                            root = self.library_root(settings)
+                            directory = next((parent for parent in path.parents if parent.is_relative_to(root) and parent.name == safe_segment(artist)), root / safe_segment(artist))
+                            key = str(directory / 'artist')
+                            if key in reserved or any((directory / ('artist' + ext)).exists() for ext in ('.jpg', '.png')):
+                                item.update(status='skipped', outputs=[])
+                                item['warnings'].append('艺术家图片已存在或已在本批次处理，保留原图')
+                            else:
+                                url = self.scraper.artist_artwork(artist)
+                                content, mime = self.scraper.cover(url)
+                                destination = directory / ('artist.png' if mime == 'image/png' else 'artist.jpg')
+                                item['outputs'] = [{'path': str(destination), 'image_url': url, 'image_hash': hashlib.sha256(content).hexdigest()}]
+                                item['artwork'] = {'artist': artist, 'source': '网易云音乐', 'url': url}
+                                reserved.add(key)
+                        if action in {'convert', 'split'}:
+                            if options['output_format'] == 'opus' and metadata.get('channels') == 1 and (options.get('bitrate') or 128) > 256:
+                                raise ValueError('Opus 单声道码率不能超过 256 kbps；请降低码率后重试')
+                            tracks = [{}]
+                            if action == 'split':
+                                cue_path = path.with_suffix('.cue')
+                                if not options.get('cue') and (not cue_path.is_file() or cue_path.is_symlink()):
+                                    raise ValueError('请提供 CUE 文本或同名 .cue 文件')
+                                text = options.get('cue')
+                                if not text:
+                                    if cue_path.stat().st_size > 1_000_000:
+                                        raise ValueError('CUE 文件超过 1 MB')
+                                    data = cue_path.read_bytes()
+                                    try: text = data.decode('utf-8-sig')
+                                    except UnicodeDecodeError: text = data.decode('gb18030')
+                                tracks = audio_tools.cue_tracks(path, text, metadata['duration'])
+                            item['outputs'] = []
+                            for track in tracks:
+                                tags = {**item['after'], **{k: v for k, v in track.items() if k in local_library.TAG_FIELDS and v}}
+                                name = f'{int(track["track_number"]):02d} - {safe_segment(track["title"])}' if track else path.stem
+                                directory = path.parent / (path.stem + (' - tracks' if track else ' - converted'))
+                                destination = directory / (safe_segment(name) + '.' + options['output_format'])
+                                count = 0
+                                original = destination
+                                while destination.exists() or str(destination) in reserved:
+                                    count += 1
+                                    destination = original.with_stem(original.stem + f' ({count})')
+                                reserved.add(str(destination))
+                                item['outputs'].append({'path': str(destination), 'tags': tags, 'start': track.get('start'), 'end': track.get('end')})
+                            item['warnings'].append('将另存音频，保留原文件；转码不能提升原始音质')
                     except Exception as error:
                         item.update(status='failed', error=self.error_message(error))
+                    if job.get('watch') and job['settings'].get('watch_failure_dir') and item['status'] in {'failed', 'needs_review'}:
+                        try:
+                            self.route_review(job, item, path)
+                        except Exception as error:
+                            item['warnings'].append('未转入待审核目录，原件保留：' + self.error_message(error))
                     job['items'].append(item)
                     self.save(job, processed=len(job['items']), detail=f'已检查 {len(job["items"])}/{job["total"]} 首')
             if ident in self.cancelled:
                 self.save(job, status='cancelled', detail='处理已取消，文件保持不变')
-            elif job['action'] == 'duplicates':
-                job['duplicates'] = [group for group in hashes.values() if len(group) > 1]
-                self.save(job, status='complete', detail=f'检查完成，发现 {len(job["duplicates"])} 组完全相同的文件；未删除文件')
-            elif job.get('download_id'):
+            elif job['action'] in REPORT_ACTIONS:
+                if job['action'] == 'duplicates':
+                    job['duplicates'] = [group for group in hashes.values() if len(group) > 1]
+                failures = sum(i['status'] == 'failed' for i in job['items'])
+                for item in job['items']:
+                    if item['status'] == 'ready': item['status'] = 'complete'
+                self.save(job, status='failed' if failures == len(job['items']) else 'partial' if failures else 'complete', detail=(f'检查完成，发现 {len(job["duplicates"])} 组重复候选；未删除文件' if job['action'] == 'duplicates' else '音频解码与参数检查完成') + (f'，{failures} 首检查失败' if failures else ''))
+            elif job.get('download_id') or job.get('watch') and job['settings'].get('watch_apply'):
                 # Automatic jobs process confident items; ambiguous ones remain available for review.
                 self.apply(ident, ApplyBody(), automatic=True)
             else:
@@ -447,6 +686,8 @@ class LibraryPipeline:
         for key in settings['fields']:
             if key not in item['locks'] and clean(candidate.get(key)) and (settings['overwrite'] or not clean(item['before'].get(key)) or key == 'title' and key not in item.get('tagged_fields', [])):
                 item['after'][key] = str(candidate[key])
+                if settings.get('chinese', 'none') != 'none' or settings.get('repair_encoding'):
+                    item['after'][key] = library_rules.transform(item['after'][key], chinese=settings.get('chinese', 'none'), repair=settings.get('repair_encoding', False))
 
     @staticmethod
     def error_message(error):
@@ -462,6 +703,8 @@ class LibraryPipeline:
         job = self.get('library_job', ident)
         if not job:
             raise HTTPException(404, '整理任务不存在')
+        if job['action'] in REPORT_ACTIONS:
+            raise HTTPException(400, '检查报告不需要应用修改')
         if not automatic and job['status'] not in {'ready', 'needs_review', 'partial', 'failed', 'paused'}:
             raise HTTPException(409, '任务仍在运行或已完成')
         if not automatic:
@@ -503,12 +746,37 @@ class LibraryPipeline:
                             raise ValueError('请先更新候选预览，再应用修改')
                         if choice == 'existing':
                             item['after'] = dict(item['before'])
+                        if job['action'] in DERIVED_ACTIONS:
+                            self.publish_derived(job, item, path)
+                            item['status'] = 'complete'
+                            self.save(job)
+                            continue
                         lyrics = job['options'].get('lyrics')
+                        if 'media_lyrics' in item: lyrics = item['media_lyrics']
+                        if snapshot := item.get('lyrics_snapshot'):
+                            sidecar = path.with_suffix('.lrc')
+                            if snapshot['sidecar'] and (not sidecar.is_file() or sidecar.is_symlink() or sidecar.stat().st_size > 8_000_000):
+                                raise ValueError('LRC 文件在预览后已变化，请重新检查')
+                            lyrics = local_library.read_lyrics(path, prefer_sidecar=snapshot['sidecar'])
+                            if hashlib.sha256(lyrics.encode('utf-8')).hexdigest() != snapshot['hash']:
+                                raise ValueError('歌词在预览后已变化，请重新检查')
+                        if job['action'] == 'clear': lyrics = ''
                         if lyrics is None and candidate and job['settings']['lyrics_mode'] != 'none':
                             lyrics = clean(candidate.get('lyrics')) or None
                             if not job['settings']['overwrite']:
                                 lyrics = local_library.read_lyrics(path) or lyrics
-                        cover = self.manual_cover(job['options'].get('cover_data'))
+                        cover = self.manual_cover(item.get('media_cover') or job['options'].get('cover_data'))
+                        if snapshot := item.get('cover_snapshot'):
+                            if snapshot['path']:
+                                cover_path = self.validate_path(snapshot['path'])
+                                if cover_path.stat().st_size > 8 * 1024 * 1024:
+                                    raise ValueError('封面超过 8 MB')
+                                cover = (cover_path.read_bytes(), snapshot['mime'])
+                            else:
+                                cover = local_library.audio_cover(local_library.mutagen.File(path))
+                            if not cover or hashlib.sha256(cover[0]).hexdigest() != snapshot['hash']:
+                                raise ValueError('封面在预览后已变化，请重新检查')
+                        if job['action'] == 'clear': cover = False
                         metadata = local_library.read_metadata(str(path), path.stat().st_mtime_ns, path.stat().st_size)
                         if cover is None and candidate and not job['settings']['overwrite'] and job['settings']['cover_mode'] != 'none':
                             cover = local_library.audio_cover(local_library.mutagen.File(path))
@@ -518,10 +786,12 @@ class LibraryPipeline:
                                     cover = self.scraper.cover(candidate['cover_url'])
                                 except Exception as error:
                                     item['warnings'].append('封面未更新：' + self.error_message(error))
-                        target = self.target(path, item['after'], job['settings']) if job['action'] in {'organize', 'both'} else path
+                        target = self.reserve_target(path, Path(item['target']), set(), job['settings']) if job['action'] in {'organize', 'both', 'rename'} else path
+                        if str(target) != item['target']:
+                            item['warnings'].append('目标出现同名文件，已保留双方并改存为：' + str(target))
                         item['target'] = str(target)
                         self.publish(job, item, path, target, lyrics, cover)
-                        if job['action'] in {'edit', 'extract', 'clean'}:
+                        if job['action'] in {'edit', 'extract', 'clean', 'clear'}:
                             self.lock_fields(target, [key for key in local_library.TAG_FIELDS if item['after'][key] != item['before'][key]])
                         item['status'] = 'complete'
                         item.pop('error', None)
@@ -579,15 +849,15 @@ class LibraryPipeline:
         try:
             shutil.copy2(source, stage)
             changes = {key: value for key, value in item['after'].items() if value != item['before'].get(key)}
-            embed_lyrics = lyrics if job['settings']['lyrics_mode'] in {'both', 'embed'} or job['action'] == 'edit' else None
-            embed_cover = cover if job['settings']['cover_mode'] in {'both', 'embed'} or job['action'] == 'edit' else None
-            if not job['settings']['overwrite'] and job['action'] != 'edit':
+            embed_lyrics = lyrics if job['settings']['lyrics_mode'] in {'both', 'embed'} or job['action'] in {'edit', 'clear'} else None
+            embed_cover = cover if job['settings']['cover_mode'] in {'both', 'embed'} or job['action'] in {'edit', 'clear'} else None
+            if not job['settings']['overwrite'] and job['action'] not in {'edit', 'clear'}:
                 if embed_lyrics is not None and local_library.read_lyrics(source, prefer_sidecar=False):
                     embed_lyrics = None
                 if embed_cover and local_library.audio_cover(local_library.mutagen.File(source)):
                     embed_cover = None
             if changes or embed_lyrics is not None or embed_cover is not None:
-                local_library.write_metadata(stage, changes, lyrics=embed_lyrics, cover=embed_cover)
+                local_library.write_metadata(stage, changes, lyrics=embed_lyrics, cover=embed_cover, clear_all=job['action'] == 'clear')
             sidecar_data = {}
             for file in companions:
                 destination = target.with_suffix(file.suffix)
@@ -650,7 +920,91 @@ class LibraryPipeline:
             for output in operation.get('outputs', []):
                 Path(output['stage']).unlink(missing_ok=True)
 
+    def publish_derived(self, job, item, source):
+        operation = {'id': job['id'] + ':' + item['id'], 'job_id': job['id'], 'asset_id': item['id'],
+                     'kind': 'derived', 'state': 'preparing', 'source': str(source), 'outputs': [],
+                     'created_at': int(time.time()), 'expires_at': int(time.time()) + job['settings']['backup_days'] * 86400}
+        self.put('library_operation', operation['id'], operation)
+        try:
+            lyrics = local_library.read_lyrics(source)
+            picture = local_library.audio_cover(local_library.mutagen.File(source))
+            for output in item['outputs']:
+                target = self.validate_path(output['path'], must_exist=False)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                stage = target.with_name('.musicdl-audio-' + uuid.uuid4().hex + target.suffix)
+                record = {'path': str(target), 'stage': str(stage), 'published': False}
+                operation['outputs'].append(record)
+                self.put('library_operation', operation['id'], operation)
+                try:
+                    if job['action'] == 'artist_artwork':
+                        content, _ = self.scraper.cover(output['image_url'])
+                        if hashlib.sha256(content).hexdigest() != output['image_hash']:
+                            raise ValueError('艺术家图片已变化，请重新生成预览')
+                        stage.write_bytes(content)
+                    else:
+                        audio_tools.convert(source, stage, job['options'], start=output.get('start'), end=output.get('end'),
+                                            cancelled=lambda: job['id'] in self.cancelled)
+                        # CUE lyrics refer to the original timeline and cannot be copied unchanged.
+                        local_library.write_metadata(stage, output['tags'], lyrics=lyrics if job['action'] == 'convert' else None, cover=picture)
+                    record['hash'] = digest(stage)
+                    operation['state'] = 'publishing'
+                    self.put('library_operation', operation['id'], operation)
+                    os.link(stage, target)
+                    record['published'] = True
+                    if job['action'] != 'artist_artwork': record['asset_id'] = self.asset(target)['id']
+                    self.put('library_operation', operation['id'], operation)
+                    if self.index_file and job['action'] != 'artist_artwork': self.index_file(self.token(target))
+                finally:
+                    stage.unlink(missing_ok=True)
+            operation['state'] = 'complete'
+            self.put('library_operation', operation['id'], operation)
+            item['operation_id'] = operation['id']
+        except Exception:
+            self.rollback(operation)
+            raise
+
+    def route_review(self, job, item, source):
+        root = self.scope_root(job['settings']['watch_failure_dir'])
+        target, count = root / source.name, 0
+        while any(target.with_suffix(p.suffix).exists() for p in [source, *self.sidecars(source)]):
+            count += 1
+            target = root / (source.stem + f' ({count})' + source.suffix)
+        routed = {**copy.deepcopy(item), 'after': dict(item['before']), 'target': str(target), 'candidates': [],
+                  'chosen': None, 'warnings': [], 'status': 'ready'}
+        route_id = uuid.uuid4().hex
+        route_job = {'id': route_id, 'action': 'organize', 'status': 'organizing', 'created_at': int(time.time()),
+                     'settings': job['settings'], 'items': [routed], 'total': 1, 'processed': 1,
+                     'options': {}, 'sources': {}, 'paths': [item['path']], 'warnings': []}
+        self.save(route_job, detail='正在将监控疑难文件移入待审核目录')
+        try:
+            self.publish(route_job, routed, source, target, None, None)
+            routed['status'] = 'complete'
+            self.save(route_job, status='complete', detail='监控疑难文件已转入待审核目录；可恢复原目录')
+            item.update(path=routed['path'], revision=routed['revision'], routed_by=route_id)
+            item['warnings'].append('已转入待审核目录：' + str(target))
+        except Exception as error:
+            routed.update(status='failed', error=self.error_message(error))
+            self.save(route_job, status='failed', detail=routed['error'])
+            raise
+
     def rollback(self, operation):
+        if operation.get('kind') == 'derived':
+            for output in operation['outputs']:
+                path = self.validate_path(output['path'], must_exist=False)
+                stage = Path(output['stage'])
+                owned = output.get('published') or stage.exists() and path.exists() and os.path.samefile(stage, path)
+                if owned and path.exists() and digest(path) != output.get('hash'):
+                    raise ValueError('生成的音频已被修改，已保留文件；请先恢复后续修改')
+            for output in operation['outputs']:
+                path, stage = Path(output['path']), Path(output['stage'])
+                owned = output.get('published') or stage.exists() and path.exists() and os.path.samefile(stage, path)
+                if owned:
+                    path.unlink(missing_ok=True)
+                    if output.get('asset_id'): self.remove('track', output['asset_id'])
+                stage.unlink(missing_ok=True)
+            operation['state'] = 'restored'
+            self.put('library_operation', operation['id'], operation)
+            return
         source, target, backup = (Path(operation[key]) for key in ('source', 'target', 'backup'))
         self.validate_path(source, internal=True, must_exist=False)
         self.validate_path(target, internal=True, must_exist=False)
@@ -710,24 +1064,28 @@ class LibraryPipeline:
                 Path(output['stage']).unlink(missing_ok=True)
         local_library.read_metadata.cache_clear()
 
-    def restore(self, ident):
+    def restore(self, ident, only=None):
         job = self.get('library_job', ident)
         if not job or job['status'] in ACTIVE:
             raise HTTPException(409, '任务不存在或仍在处理')
+        if only and set(only) - {item['id'] for item in job['items']}:
+            raise HTTPException(400, '所选文件不属于此任务')
         self.save(job, status='restoring', detail='正在恢复原文件')
         def run():
             try:
                 for item in reversed(job['items']):
+                    if only and item['id'] not in only:
+                        continue
                     operation = self.get('library_operation', item.get('operation_id', ''))
                     if not operation or operation['state'] != 'complete':
                         continue
-                    target = Path(operation['target'])
+                    target = Path(operation.get('target') or operation['source'])
                     with self.lock(target):
-                        if not target.exists() or revision(target) != operation['output_revision']:
+                        if operation.get('kind') != 'derived' and (not target.exists() or revision(target) != operation['output_revision']):
                             raise ValueError('文件在整理后已被修改，无法自动恢复；请先处理后续修改')
                         self.rollback(operation)
                         item['status'] = 'restored'
-                self.save(job, status='restored', detail='已恢复原文件、标签和目录')
+                self.save(job, status='partial' if any(i['status'] == 'complete' for i in job['items']) else 'restored', detail='已恢复所选原文件、标签和目录；转码输出已撤回')
             except Exception as error:
                 self.save(job, status='partial', detail=self.error_message(error))
         self.futures[ident] = self.pool.submit(run)
@@ -741,6 +1099,7 @@ class LibraryPipeline:
                 except Exception as error:
                     self.old.pushlog('error', '整理中断恢复需人工处理：' + self.error_message(error), category='download')
             elif operation['state'] in {'complete', 'restored'} and operation.get('expires_at', 0) < time.time():
+                if operation.get('kind') == 'derived': continue
                 backup_dir = Path(operation['backup']).parent
                 history = (self.old.FILE_ROOT / '.musicdl-history').resolve()
                 if history.is_relative_to(self.old.FILE_ROOT.resolve()) and backup_dir.resolve().is_relative_to(history) and not backup_dir.is_symlink():
@@ -760,8 +1119,88 @@ class LibraryPipeline:
             except Exception as error:
                 download['processing'] = {'id': '', 'status': 'failed', 'detail': self.error_message(error)}
                 self.put('download', download['id'], download)
+        self.start_watcher()
+
+    def watch_roots(self, settings):
+        roots = [self.scope_root(directory) for directory in settings['watch_dirs'] if directory.strip()]
+        library = self.library_root(settings)
+        if settings['watch_enabled'] and any(root.is_relative_to(library) or library.is_relative_to(root) for root in roots):
+            raise HTTPException(400, '监控目录与整理后的音乐库必须分开，避免重复刮削')
+        if settings['watch_enabled'] and not roots:
+            raise HTTPException(400, '开启监控需要至少一个目录')
+        if settings.get('watch_failure_dir'):
+            review = self.scope_root(settings['watch_failure_dir'])
+            if any(review.is_relative_to(root) or root.is_relative_to(review) for root in roots) or review.is_relative_to(library) or library.is_relative_to(review):
+                raise HTTPException(400, '待审核目录须与监控目录及最终音乐库分开')
+        return roots
+
+    def watch_scan(self):
+        if not self.watch_guard.acquire(blocking=False):
+            return {'queued': 0, 'detail': '已有目录检查正在运行'}
+        try:
+            settings = self.settings()
+            if not settings['watch_enabled']:
+                return {'queued': 0, 'detail': '目录监控未开启'}
+            roots = self.watch_roots(settings)
+            now, pending, tokens = time.time(), [], set()
+            for path in self.scan():
+                if self.watch_stop.is_set():
+                    break
+                if path.suffix.lower() not in local_library.AUDIO_EXTENSIONS or not any(path.is_relative_to(root) for root in roots):
+                    continue
+                if any(part.endswith((' - converted', ' - tracks')) for part in path.parts):
+                    continue
+                token = self.token(path)
+                tokens.add(token)
+                signature = revision(path)
+                previous = self.get('library_watch', token, {})
+                if previous.get('revision') == signature:
+                    continue
+                old_job = self.get('library_job', previous.get('job_id', ''), {})
+                if old_job.get('status') in ACTIVE:
+                    continue
+                if any(item.get('path') == token and item.get('revision') == signature for item in old_job.get('items', [])):
+                    self.put('library_watch', token, {**previous, 'revision': signature})
+                    continue
+                seen = self.watch_seen.get(token)
+                if seen is None or seen[0] != signature:
+                    self.watch_seen[token] = (signature, now)
+                    continue
+                if now - seen[1] < settings['watch_stable_seconds']:
+                    continue
+                pending.append((token, signature))
+                if len(pending) >= 1000:
+                    break
+            self.watch_seen = {key: value for key, value in self.watch_seen.items() if key in tokens}
+            if pending and not self.watch_stop.is_set():
+                job = self.submit(ProcessBody(paths=[token for token, _ in pending], action=settings['watch_action']), watch=True)
+                for token, signature in pending:
+                    self.put('library_watch', token, {'revision': signature, 'job_id': job['id']})
+            state = {'queued': len(pending), 'checked_at': int(now), 'detail': f'已提交 {len(pending)} 首稳定文件；未匹配的歌曲在任务中等待审核'}
+            self.put('library_setting', 'watch_status', state)
+            return state
+        finally:
+            self.watch_guard.release()
+
+    def start_watcher(self):
+        if self.watch_thread and self.watch_thread.is_alive():
+            return
+        def run():
+            while not self.watch_stop.is_set():
+                try:
+                    self.watch_scan()
+                except Exception as error:
+                    self.put('library_setting', 'watch_status', {'checked_at': int(time.time()), 'error': self.error_message(error)})
+                self.watch_wake.wait(self.settings()['watch_interval'])
+                self.watch_wake.clear()
+        self.watch_thread = threading.Thread(target=run, name='library-watch', daemon=True)
+        self.watch_thread.start()
 
     def close(self):
+        self.watch_stop.set()
+        self.watch_wake.set()
+        if self.watch_thread:
+            self.watch_thread.join(timeout=5)
         with self.guard:
             self.cancelled.update(self.futures)
         self.pool.shutdown(wait=True, cancel_futures=True)
@@ -774,8 +1213,23 @@ class LibraryPipeline:
         @router.put('/api/library/settings')
         def save_settings(body: LibrarySettings):
             self.library_root(body.model_dump())
+            self.watch_roots(body.model_dump())
             self.put('library_setting', 'config', body.model_dump())
+            self.watch_wake.set()
             return self.public_settings()
+
+        @router.put('/api/library/credentials')
+        def save_credentials(body: CredentialsBody):
+            self.put('library_setting', 'credentials', body.model_dump())
+            return {'has_acoustid_key': self.public_settings()['has_acoustid_key']}
+
+        @router.get('/api/library/watch')
+        def watch_status():
+            return self.get('library_setting', 'watch_status', {'detail': '尚未检查目录'})
+
+        @router.post('/api/library/watch/scan')
+        def watch_scan():
+            return self.watch_scan()
 
         @router.put('/api/library/navidrome')
         def save_navidrome(body: NavidromeSettings):
@@ -790,12 +1244,44 @@ class LibraryPipeline:
             return self.public_settings()['navidrome']
 
         @router.get('/api/library/jobs')
-        def jobs(offset: int = 0, size: int = 30):
+        def jobs(offset: int = 0, size: int = 30, status: str = 'all'):
             if offset < 0 or not 1 <= size <= 100:
                 raise HTTPException(400, '分页参数无效')
-            all_jobs = self.values('library_job')
+            all_jobs = sorted(self.values('library_job'), key=lambda job: job['created_at'], reverse=True)
+            if status != 'all':
+                selected = ACTIVE if status == 'active' else {'failed', 'partial', 'paused'} if status == 'failed' else {status}
+                all_jobs = [job for job in all_jobs if job['status'] in selected]
             return {'jobs': [{k: v for k, v in job.items() if k not in {'items', 'sources', 'options', 'settings', 'paths'}}
-                             for job in all_jobs[offset:offset + size]], 'has_more': len(all_jobs) > offset + size}
+                             for job in all_jobs[offset:offset + size]], 'has_more': len(all_jobs) > offset + size, 'total': len(all_jobs)}
+
+        @router.get('/api/library/versions')
+        def versions(path: str):
+            asset = self.asset(self.resolve(path))
+            return {'versions': [{'job_id': job['id'], 'created_at': job['created_at'], 'action': job['action'],
+                                  'status': item['status'], 'before': item['before'], 'after': item['after'],
+                                  'restorable': bool(item.get('operation_id') and (operation := self.get('library_operation', item['operation_id'], {})).get('state') == 'complete'
+                                                     and (operation.get('kind') == 'derived' or Path(operation.get('backup', '')).is_file()))}
+                                 for job in sorted(self.values('library_job'), key=lambda j: j['created_at'], reverse=True)
+                                 for item in job.get('items', []) if item['id'] == asset['id'] and item.get('operation_id')]}
+
+        @router.get('/api/library/jobs/{ident}/report')
+        def report(ident: str):
+            value = self.get('library_job', ident)
+            if not value:
+                raise HTTPException(404, '整理任务不存在')
+            output = io.StringIO(newline='')
+            writer = csv.writer(output)
+            writer.writerow(['文件', '状态', '原路径', '目标路径', '修改前', '修改后', '警告或错误', '输出文件', '检查参数'])
+            def cell(value):
+                value = str(value)
+                return "'" + value if value.startswith(('=', '+', '-', '@', '\t', '\r')) else value
+            for item in value['items']:
+                writer.writerow([cell(v) for v in [item['name'], item['status'], item['original_path'], item['target'],
+                    json.dumps(item['before'], ensure_ascii=False), json.dumps(item['after'], ensure_ascii=False),
+                    '；'.join([*item['warnings'], item.get('error', '')]),
+                    '\n'.join(row['path'] for row in item.get('outputs', [])), json.dumps(item.get('quality', {}), ensure_ascii=False)]])
+            return Response(output.getvalue().encode('utf-8-sig'), media_type='text/csv',
+                            headers={'Content-Disposition': f'attachment; filename="library-report-{ident}.csv"'})
 
         @router.get('/api/library/jobs/{ident}')
         def job(ident: str):
@@ -813,6 +1299,23 @@ class LibraryPipeline:
             with self.guard:
                 return self.apply(ident, body)
 
+        @router.post('/api/library/jobs/{ident}/search')
+        def search_candidates(ident: str, body: CandidateQuery):
+            with self.guard:
+                job = self.get('library_job', ident)
+                if not job or job['status'] in ACTIVE or job['action'] not in {'scrape', 'both'}:
+                    raise HTTPException(409, '任务不存在或暂不能搜索候选')
+                item = next((row for row in job['items'] if row['id'] == body.item and row['status'] in {'ready', 'needs_review', 'failed'}), None)
+                if not item:
+                    raise HTTPException(409, '文件已处理或不存在，请新建任务')
+                path = self.resolve(item['path'])
+                reference = {**item['before'], '_path': str(path), '_query': body.query}
+                candidates, warnings = self.scraper.search(reference, body.sources or job['settings']['sources'])
+                item.update(candidates=pick(reference, candidates)[0], chosen=None, after=dict(item['before']),
+                            status='needs_review', warnings=warnings)
+                self.save(job, status='needs_review', detail='搜索结果已更新，请选择并预览候选')
+                return {k: v for k, v in job.items() if k not in {'sources', 'options'}}
+
         @router.post('/api/library/jobs/{ident}/preview')
         def preview(ident: str, body: ApplyBody):
             with self.guard:
@@ -828,12 +1331,14 @@ class LibraryPipeline:
                         raise HTTPException(400, '候选不存在')
                     item['chosen'], item['after'] = choice, dict(item['before'])
                     if candidate:
-                        candidate, warnings = self.scraper.enrich(candidate, job['settings']['lyrics_mode'] != 'none')
+                        candidate, warnings = self.scraper.enrich(candidate, job['settings']['lyrics_mode'] != 'none', item['candidates'])
                         item['warnings'].extend(warnings)
                         item['candidates'] = [candidate if c['id'] == candidate['id'] else c for c in item['candidates']]
                         self.merge(item, candidate, job['settings'])
-                    if job['action'] in {'organize', 'both'}:
-                        item['target'] = str(self.target(self.resolve(item['path']), item['after'], job['settings']))
+                    if job['action'] in {'organize', 'both', 'rename'}:
+                        reserved = {row['target'] for row in job['items'] if row['id'] != item['id']}
+                        path = self.resolve(item['path'])
+                        item['target'] = str(self.reserve_target(path, self.item_target(path, item, job), reserved, job['settings']))
                     item['status'] = 'ready'
                 self.save(job, status='needs_review' if any(i['status'] == 'needs_review' for i in job['items']) else 'ready', detail='预览已更新，请确认后应用')
                 return {k: v for k, v in job.items() if k not in {'sources', 'options'}}
@@ -857,9 +1362,9 @@ class LibraryPipeline:
             return self.submit(ProcessBody(paths=paths, **job['options']))
 
         @router.post('/api/library/jobs/{ident}/restore')
-        def restore(ident: str):
+        def restore(ident: str, body: RestoreBody | None = None):
             with self.guard:
-                return self.restore(ident)
+                return self.restore(ident, body.items if body else None)
 
         @router.delete('/api/library/files/locks')
         def unlock(path: str):

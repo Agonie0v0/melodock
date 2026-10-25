@@ -3,7 +3,7 @@ import { EngineSettings } from "./EngineSettings";
 import { BotSettings } from "./BotSettings";
 import { RuntimeLogs } from "./RuntimeLogs";
 import { LibraryWorkspace } from "./LibraryWorkspace";
-import { LibrarySettings, processingLabels } from "./LibrarySettings";
+import { processingLabels } from "./LibrarySettings";
 import { PlaylistLibrary } from "./PlaylistLibrary";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -13,6 +13,7 @@ import {
   ListMusic,
   Download,
   Folder,
+  WandSparkles,
   Settings,
   Heart,
   Play,
@@ -65,10 +66,11 @@ const views = {
   search: ["搜索音乐", "歌曲、歌手、专辑与不同音质版本"],
   player: ["正在播放", "歌词与播放列表"],
   import: ["歌单导入", "导入后独立保存到我的歌单"],
-  playlists: ["我的歌单", "保存、播放与管理导入的歌单"],
+  playlists: ["收藏与歌单", "快速收藏喜欢的歌曲，或按主题管理歌单"],
   queue: ["下载队列", "下载进度与所选音质"],
   favorites: ["我的收藏", "保存喜欢的曲目与音源"],
-  files: ["音乐库", "本地音乐管理、刮削整理与 Navidrome"],
+  files: ["音乐库", "浏览、播放与管理本地音乐和 Navidrome"],
+  organize: ["刮削整理", "补全音乐资料、审核版本并安全归档"],
   logs: ["运行日志", "实时查看搜索、下载与报错详情"],
   settings: ["音源与设置", "账号权限、代理与下载偏好"],
   bots: ["通知与机器人", "企业微信应用、Telegram 与手机音乐下载链接"],
@@ -138,6 +140,7 @@ export function App() {
     [importName, setImportName] = useState("");
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  const [libraryTab, setLibraryTab] = useState("local");
   const [managing, setManaging] = useState(false);
   const [managementError, setManagementError] = useState("");
   const [confirmation, setConfirmation] = useState<{
@@ -306,7 +309,7 @@ export function App() {
     };
   }, [loginRequired, hasActiveDownloads]);
   useEffect(() => {
-    if (view === "files")
+    if (view === "files" || view === "organize")
       api<LibraryFile[]>("/files").then(setFiles).catch(fail);
   }, [view]);
   useEffect(() => {
@@ -1304,31 +1307,38 @@ export function App() {
                 [
                   "search",
                   "player",
-                  "favorites",
                   "playlists",
                   "import",
                   "queue",
                   "files",
+                  "organize",
                   "logs",
                 ] as View[]
               ).map((name, i) => {
                 const Icon = [
                   Search,
                   Music2,
-                  Heart,
                   ListMusic,
                   Plus,
                   Download,
                   Folder,
+                  WandSparkles,
                   ScrollText,
                 ][i];
                 return (
                   <button
                     key={name}
-                    className={`nav-item ${view === name ? "active" : ""}`}
-                    aria-current={view === name ? "page" : undefined}
+                    className={`nav-item ${view === name || (name === "playlists" && view === "favorites") ? "active" : ""}`}
+                    aria-current={
+                      view === name ||
+                      (name === "playlists" && view === "favorites")
+                        ? "page"
+                        : undefined
+                    }
                     onClick={() => {
                       setView(name);
+                      if (name === "files") setLibraryTab("local");
+                      if (name === "organize") setLibraryTab("workbench");
                       setSourceFilter("all");
                       setSelected(new Set());
                     }}
@@ -1348,7 +1358,7 @@ export function App() {
                           }
                         </span>
                       )}
-                    {name === "favorites" && favorites.length > 0 && (
+                    {name === "playlists" && favorites.length > 0 && (
                       <span className="nav-count">{favorites.length}</span>
                     )}
                   </button>
@@ -1447,6 +1457,34 @@ export function App() {
                 </label>
               </div>
             </header>
+          )}
+          {(view === "playlists" || view === "favorites") && (
+            <nav
+              className="library-tabs collection-tabs"
+              aria-label="收藏与歌单"
+            >
+              <button
+                aria-current={view === "favorites" ? "page" : undefined}
+                onClick={() => {
+                  setView("favorites");
+                  setSelected(new Set());
+                  resetCollectionFilters();
+                }}
+              >
+                <Heart />
+                我的收藏 · {favorites.length}
+              </button>
+              <button
+                aria-current={view === "playlists" ? "page" : undefined}
+                onClick={() => {
+                  setView("playlists");
+                  setSelected(new Set());
+                }}
+              >
+                <ListMusic />
+                我的歌单 · {savedPlaylists.length}
+              </button>
+            </nav>
           )}
           {(view === "search" || view === "favorites") && (
             <section className="view search-view">
@@ -2374,8 +2412,15 @@ export function App() {
               </form>
             </section>
           )}
-          {view === "files" && (
+          {(view === "files" || view === "organize") && (
             <LibraryWorkspace
+              tab={libraryTab}
+              setTab={(tab) => {
+                setLibraryTab(tab);
+                setView(
+                  ["local", "navidrome"].includes(tab) ? "files" : "organize",
+                );
+              }}
               openSettings={() => setView("settings")}
               files={files}
               selected={selectedFiles}
@@ -2431,7 +2476,6 @@ export function App() {
           )}
           {view === "settings" && config && (
             <section className="view">
-              <LibrarySettings />
               <EngineSettings sources={sources} saved={load} />
             </section>
           )}

@@ -6,6 +6,7 @@ import {
   RefreshCw,
   RotateCcw,
   X,
+  Download,
 } from "lucide-react";
 import { api } from "./api";
 import { processingLabels, tagLabels } from "./LibrarySettings";
@@ -27,6 +28,34 @@ const actionNames: Record<string, string> = {
   extract: "文件名提取",
   clean: "清理标签",
   duplicates: "重复文件检查",
+  rename: "批量重命名",
+  export_lyrics: "导出歌词",
+  import_lyrics: "嵌入歌词",
+  export_cover: "导出专辑封面",
+  import_cover: "嵌入专辑封面",
+  clear: "清空内嵌标签",
+  convert: "格式转换",
+  split: "CUE 分轨",
+  quality: "音频完整性与参数检查",
+  artist_artwork: "刮削艺术家图片",
+};
+const sourceNames: Record<string, string> = {
+  netease: "网易云",
+  qq: "QQ音乐",
+  migu: "咪咕音乐",
+  kugou: "酷狗音乐",
+  kuwo: "酷我音乐",
+  musicbrainz: "MusicBrainz",
+  acoustid: "AcoustID",
+};
+type Version = {
+  job_id: string;
+  created_at: number;
+  action: string;
+  status: string;
+  restorable: boolean;
+  before: Record<string, string>;
+  after: Record<string, string>;
 };
 
 export function LibraryJobs({
@@ -45,6 +74,9 @@ export function LibraryJobs({
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [filter, setFilter] = useState("all");
+  const [queries, setQueries] = useState<Record<string, string>>({});
+  const [versions, setVersions] = useState<Record<string, Version[]>>({});
   const previousStatus = useRef("");
   useEffect(() => {
     if (focus) setSelected(focus);
@@ -55,7 +87,7 @@ export function LibraryJobs({
     async function load() {
       try {
         const result = await api<{ jobs: LibraryJob[]; has_more: boolean }>(
-          `/library/jobs?offset=${offset}&size=30`,
+          `/library/jobs?offset=${offset}&size=30&status=${filter}`,
         );
         if (stopped) return;
         setJobs(result.jobs);
@@ -89,7 +121,7 @@ export function LibraryJobs({
       stopped = true;
       window.clearTimeout(timer);
     };
-  }, [selected, offset, refresh]);
+  }, [selected, offset, refresh, filter]);
   async function action(name: string) {
     if (!detail) return;
     setBusy(name);
@@ -124,6 +156,15 @@ export function LibraryJobs({
       setBusy("");
     }
   }
+  const visibleJobs = jobs.filter(
+    (job) =>
+      filter === "all" ||
+      (filter === "active"
+        ? active.has(job.status)
+        : filter === "failed"
+          ? ["failed", "partial", "paused"].includes(job.status)
+          : job.status === filter),
+  );
   return (
     <section className="view library-jobs">
       <div className="library-heading">
@@ -177,8 +218,16 @@ export function LibraryJobs({
             </span>
           </div>
           <div className="management-toolbar">
+            <a
+              className="secondary"
+              href={`/api/library/jobs/${detail.id}/report`}
+              download
+            >
+              <Download />
+              导出处理报告
+            </a>
             {["ready", "needs_review", "partial"].includes(detail.status) &&
-              detail.action !== "duplicates" && (
+              !["duplicates", "quality"].includes(detail.action) && (
                 <button
                   className="primary"
                   disabled={
@@ -233,6 +282,16 @@ export function LibraryJobs({
                 </details>
               )}
           </div>
+          {detail.settings && (
+            <p className="setting-help processing-rules">
+              本次来源：
+              {detail.settings.sources
+                .map((id) => sourceNames[id] || id)
+                .join("、") || "无"}{" "}
+              · {detail.settings.overwrite ? "覆盖未锁定标签" : "只补缺失标签"}{" "}
+              · 手动锁定字段保留
+            </p>
+          )}
           {detail.warnings?.map((warning, index) => (
             <p key={index} className="library-warning" role="status">
               {warning}
@@ -261,7 +320,7 @@ export function LibraryJobs({
                 ))
               ) : (
                 <p className="empty">
-                  未发现内容完全相同的文件。标签不同的同一首歌可能不会被此检查识别。
+                  本次检查未发现重复候选。不同检查方式的判断范围不同，可切换方式进一步检查。
                 </p>
               )}
             </div>
@@ -269,6 +328,9 @@ export function LibraryJobs({
           {detail.action !== "duplicates" && (
             <div className="processing-items">
               {detail.items?.map((item) => {
+                const chosenCandidate = item.candidates.find(
+                  (c) => c.id === item.chosen,
+                );
                 const changes = Object.entries(item.after).filter(
                   ([key, value]) => value !== item.before[key],
                 );
@@ -298,6 +360,60 @@ export function LibraryJobs({
                       </span>
                     </summary>
                     <div className="processing-item-body">
+                      {["scrape", "both"].includes(detail.action) &&
+                        ["ready", "needs_review", "failed"].includes(
+                          item.status,
+                        ) &&
+                        !active.has(detail.status) && (
+                          <form
+                            className="candidate-search"
+                            onSubmit={async (e) => {
+                              e.preventDefault();
+                              setBusy("search");
+                              setError("");
+                              try {
+                                setDetail(
+                                  await api<LibraryJob>(
+                                    `/library/jobs/${detail.id}/search`,
+                                    "POST",
+                                    {
+                                      item: item.id,
+                                      query:
+                                        queries[item.id] ||
+                                        `${item.before.title} ${item.before.artist}`.trim(),
+                                    },
+                                  ),
+                                );
+                              } catch (e) {
+                                setError((e as Error).message);
+                              } finally {
+                                setBusy("");
+                              }
+                            }}
+                          >
+                            <label>
+                              搜索歌曲资料
+                              <input
+                                maxLength={200}
+                                required
+                                value={
+                                  queries[item.id] ??
+                                  `${item.before.title} ${item.before.artist}`.trim()
+                                }
+                                onChange={(e) =>
+                                  setQueries({
+                                    ...queries,
+                                    [item.id]: e.target.value,
+                                  })
+                                }
+                                placeholder="歌名 歌手"
+                              />
+                            </label>
+                            <button className="secondary" disabled={!!busy}>
+                              重新搜索候选
+                            </button>
+                          </form>
+                        )}
                       {!!item.candidates.length && (
                         <label className="candidate-select">
                           匹配结果
@@ -325,6 +441,8 @@ export function LibraryJobs({
                                     : candidate.source}
                                 ：{candidate.title} / {candidate.artist} /{" "}
                                 {candidate.album || "未知专辑"}
+                                {` · ${candidate.score} 分`}
+                                {candidate.date ? ` · ${candidate.date}` : ""}
                                 {candidate.conflicts.length
                                   ? `（${candidate.conflicts.join("、")}）`
                                   : ""}
@@ -345,10 +463,27 @@ export function LibraryJobs({
                         )}
                       {item.chosen && item.chosen !== "existing" && (
                         <p className="setting-help">
+                          匹配分数{" "}
+                          {
+                            item.candidates.find((c) => c.id === item.chosen)
+                              ?.score
+                          }{" "}
+                          ·{" "}
                           {item.candidates
                             .find((c) => c.id === item.chosen)
                             ?.reasons.join("、")}
-                          。匹配依据仅用于辅助判断歌曲版本。
+                          。分数用于辅助审核，不代表识别正确率；发行日期、曲序等以所选发行版本为准。
+                        </p>
+                      )}
+                      {chosenCandidate?.field_sources && (
+                        <p className="setting-help">
+                          补充资料来源：
+                          {Object.entries(chosenCandidate.field_sources)
+                            .map(
+                              ([field, source]) =>
+                                `${tagLabels[field] || { lyrics: "歌词", cover_url: "封面" }[field] || field}（${{ netease: "网易云", qq: "QQ音乐", musicbrainz: "MusicBrainz" }[source] || source}）`,
+                            )
+                            .join("、")}
                         </p>
                       )}
                       {changes.length ? (
@@ -387,6 +522,44 @@ export function LibraryJobs({
                           <p className="library-path">{item.target}</p>
                         </div>
                       </div>
+                      {item.artwork && (
+                        <p className="setting-help">
+                          艺术家：{item.artwork.artist} · 来源：
+                          {item.artwork.source}
+                        </p>
+                      )}
+                      {item.quality && (
+                        <div className="library-checks">
+                          {Object.entries(item.quality).map(([key, value]) => (
+                            <span key={key}>
+                              {(
+                                {
+                                  duration: "时长（秒）",
+                                  bitrate: "码率（bps）",
+                                  sample_rate: "采样率（Hz）",
+                                  channels: "声道",
+                                  bits_per_sample: "位深",
+                                } as Record<string, string>
+                              )[key] || key}
+                              ：{value ?? "未知"}
+                            </span>
+                          ))}
+                          <span>完整解码通过</span>
+                        </div>
+                      )}
+                      {item.outputs && (
+                        <div>
+                          <h4>输出文件（原件保留）</h4>
+                          {item.outputs.map((output) => (
+                            <p className="library-path" key={output.path}>
+                              {output.path}
+                              {output.start != null
+                                ? ` · ${output.start.toFixed(2)}s – ${output.end?.toFixed(2)}s`
+                                : ""}
+                            </p>
+                          ))}
+                        </div>
+                      )}
                       {item.locks.length > 0 && (
                         <p className="setting-help">
                           手动锁定：
@@ -413,6 +586,94 @@ export function LibraryJobs({
                       >
                         下载当前文件
                       </a>
+                      <button
+                        className="secondary"
+                        disabled={!!busy}
+                        onClick={async () => {
+                          setBusy("versions");
+                          setError("");
+                          try {
+                            const result = await api<{ versions: Version[] }>(
+                              `/library/versions?path=${encodeURIComponent(item.path)}`,
+                            );
+                            setVersions({
+                              ...versions,
+                              [item.id]: result.versions,
+                            });
+                          } catch (e) {
+                            setError((e as Error).message);
+                          } finally {
+                            setBusy("");
+                          }
+                        }}
+                      >
+                        查看此曲标签版本
+                      </button>
+                      {versions[item.id] && (
+                        <div className="processing-versions">
+                          {versions[item.id].length ? (
+                            versions[item.id].map((version) => (
+                              <details key={version.job_id}>
+                                <summary>
+                                  {new Date(
+                                    version.created_at * 1000,
+                                  ).toLocaleString("zh-CN")}{" "}
+                                  ·{" "}
+                                  {actionNames[version.action] ||
+                                    version.action}{" "}
+                                  ·{" "}
+                                  {processingLabels[version.status] ||
+                                    version.status}
+                                </summary>
+                                {Object.entries(version.after)
+                                  .filter(
+                                    ([key, value]) =>
+                                      version.before[key] !== value,
+                                  )
+                                  .map(([key, value]) => (
+                                    <p key={key}>
+                                      {tagLabels[key] || key}：
+                                      {version.before[key] || "空"} →{" "}
+                                      {value || "空"}
+                                    </p>
+                                  ))}
+                                {version.restorable && (
+                                  <button
+                                    className="secondary"
+                                    disabled={!!busy}
+                                    onClick={async () => {
+                                      setBusy("restore");
+                                      setError("");
+                                      try {
+                                        await api(
+                                          `/library/jobs/${version.job_id}/restore`,
+                                          "POST",
+                                          { items: [item.id] },
+                                        );
+                                        setVersions({
+                                          ...versions,
+                                          [item.id]: [],
+                                        });
+                                        setSelected(version.job_id);
+                                        setDetail(null);
+                                        setRefresh((v) => v + 1);
+                                      } catch (e) {
+                                        setError((e as Error).message);
+                                      } finally {
+                                        setBusy("");
+                                      }
+                                    }}
+                                  >
+                                    恢复此曲到本次修改前
+                                  </button>
+                                )}
+                              </details>
+                            ))
+                          ) : (
+                            <p>暂无可显示的修改版本。</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </details>
                 );
@@ -423,9 +684,31 @@ export function LibraryJobs({
       ) : (
         !loading && (
           <>
-            {jobs.length ? (
+            <div className="library-job-filters" aria-label="筛选整理任务">
+              <span className="setting-help">筛选全部任务</span>
+              {[
+                ["all", "全部"],
+                ["needs_review", "待确认"],
+                ["ready", "待应用"],
+                ["active", "处理中"],
+                ["failed", "失败 / 部分完成"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  className="secondary"
+                  aria-pressed={filter === id}
+                  onClick={() => {
+                    setFilter(id);
+                    setOffset(0);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {visibleJobs.length ? (
               <div className="processing-list">
-                {jobs.map((job) => (
+                {visibleJobs.map((job) => (
                   <button
                     className="processing-list-row"
                     key={job.id}
@@ -454,9 +737,11 @@ export function LibraryJobs({
             ) : (
               <div className="library-empty">
                 <History />
-                <h3>还没有整理任务</h3>
+                <h3>
+                  {filter !== "all" ? "没有符合条件的任务" : "还没有整理任务"}
+                </h3>
                 <p>
-                  在本地音乐库选择歌曲后开始刮削或整理，也可在设置中开启下载后自动处理。
+                  在“选择与处理”中选择歌曲并生成预览，也可在“来源与归档规则”开启下载后自动处理。
                 </p>
               </div>
             )}

@@ -29,7 +29,7 @@ def wav(path):
 
 
 @pytest.fixture
-def library(tmp_path):
+def library(tmp_path, monkeypatch):
     root = tmp_path / 'music'
     root.mkdir()
     db = sqlite3.connect(':memory:', check_same_thread=False)
@@ -45,6 +45,7 @@ def library(tmp_path):
             return [copy.deepcopy(value) for (k, _), value in data.items() if k == kind]
     old = SimpleNamespace(FILE_ROOT=root, manager=SimpleNamespace(workdirs=lambda: [root], config={}), pushlog=lambda *a, **kw: None)
     pipeline = LibraryPipeline(old, db, threading.RLock(), get, put, values, lambda k, i: data.pop((k, i), None))
+    monkeypatch.setattr(pipeline.scraper, 'search', lambda *args: ([], []))
     def index(token):
         path = pipeline.resolve(token)
         info = path.stat()
@@ -230,6 +231,58 @@ def test_matching_rejects_versions_and_ambiguous_albums():
     assert pick(ref, [base, {**base, 'source_id': '2', 'album': '精选'}])[1] is None
     row = from_row('netease', {'id': 1, 'name': '歌', 'ar': [{'name': '人'}], 'al': {'name': '辑'}, 'dt': 123000, 'no': 2})
     assert row['duration'] == 123 and row['track_number'] == '2'
+
+
+def test_manual_scrape_searches_selected_sources_and_snapshots_rules(library, monkeypatch):
+    path = wav(library.old.FILE_ROOT / 'known.wav')
+    token = library.token(path)
+    library.asset(path, {'source': 'qq', 'source_id': '1', 'title': '歌曲', 'artist': '歌手', 'album': '专辑'})
+    calls = []
+    monkeypatch.setattr(library.scraper, 'search', lambda ref, sources: (calls.append(sources) or [], ['MusicBrainz未找到候选']))
+    monkeypatch.setattr(library.scraper, 'enrich', lambda c, *a: (c, []))
+    job = preview(library, path, 'scrape', sources=['musicbrainz'], overwrite=True)
+    assert calls == [['musicbrainz']]
+    assert job['settings']['sources'] == ['musicbrainz'] and job['settings']['overwrite']
+    assert library.settings()['sources'] == ['netease', 'qq'] and not library.settings()['overwrite']
+    assert 'MusicBrainz未找到候选' in job['items'][0]['warnings']
+    assert {'musicbrainz', 'migu', 'kugou', 'kuwo', 'acoustid'} <= {source['id'] for source in library.public_settings()['metadata_sources']}
+
+
+def test_scrape_without_sources_is_rejected_before_creating_job(library):
+    path = wav(library.old.FILE_ROOT / 'unknown.wav')
+    library.put('library_setting', 'config', {'sources': []})
+    with pytest.raises(HTTPException, match='请选择至少一个刮削来源'):
+        preview(library, path, 'scrape')
+    assert not library.values('library_job')
+    assert preview(library, path, 'organize')['status'] == 'ready'
+
+
+def test_automatic_download_from_other_provider_checks_metadata_sources(library, monkeypatch):
+    path = wav(library.old.FILE_ROOT / 'migu.wav')
+    token = library.token(path)
+    source = {'source': 'MiguMusicClient', 'source_id': '1', 'title': '歌曲', 'artist': '歌手', 'album': '专辑', 'duration': 1}
+    library.asset(path, source)
+    calls = []
+    monkeypatch.setattr(library.scraper, 'search', lambda ref, sources: (calls.append(sources) or [], []))
+    result = wait(library, library.submit(ProcessBody(paths=[token], action='scrape'), 'download')['id'])
+    assert result['status'] == 'complete' and calls == [['netease', 'qq']]
+
+
+def test_current_tags_override_stale_download_identity(library, monkeypatch):
+    path = wav(library.old.FILE_ROOT / 'retagged.wav')
+    local_library.write_metadata(path, {'title': '新歌', 'artist': '新歌手', 'album': '新专辑'})
+    library.asset(path, {'source': 'qq', 'source_id': 'old', 'title': '旧歌', 'artist': '旧歌手', 'album': '旧专辑'})
+    queries = []
+    def search(reference, sources):
+        queries.append(reference)
+        return [{**reference, 'source_id': 'new'}], []
+    monkeypatch.setattr(library.scraper, 'search', search)
+    monkeypatch.setattr(library.scraper, 'enrich', lambda candidate, *args: (candidate, []))
+    job = preview(library, path, 'scrape')
+    assert queries[0]['title'] == '新歌' and queries[0]['album'] == '新专辑'
+    chosen = next(c for c in job['items'][0]['candidates'] if c['id'] == job['items'][0]['chosen'])
+    assert chosen['source_id'] == 'new'
+    assert '标题不同' in next(c for c in job['items'][0]['candidates'] if c['source_id'] == 'old')['conflicts']
 
 
 def test_boundaries_hidden_files_and_duplicate_report(library):

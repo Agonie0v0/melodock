@@ -231,6 +231,45 @@ try {
   };
   let botSaves = 0;
   let libraryConfig = {
+    metadata_sources: [
+      {
+        id: "netease",
+        label: "网易云",
+        description: "中文歌曲与歌词",
+        fields: ["title", "lyrics"],
+        note: "复用 Cookie 与代理",
+        url: "https://music.163.com/",
+      },
+      {
+        id: "qq",
+        label: "QQ音乐",
+        description: "中文专辑与歌词",
+        fields: ["title", "lyrics"],
+        note: "复用 Cookie 与代理",
+        url: "https://y.qq.com/",
+      },
+      {
+        id: "musicbrainz",
+        label: "MusicBrainz",
+        description: "国际音乐与发行版本",
+        fields: ["album_artist", "cover"],
+        note: "封面来自 Cover Art Archive，不提供歌词",
+        url: "https://musicbrainz.org/",
+      },
+      ...[
+        ["migu", "咪咕音乐"],
+        ["kugou", "酷狗音乐"],
+        ["kuwo", "酷我音乐"],
+        ["acoustid", "AcoustID 指纹"],
+      ].map(([id, label]) => ({
+        id,
+        label,
+        description: "额外元数据来源",
+        fields: ["title", "album"],
+        note: "依来源实际返回为准",
+        url: "https://example.com/",
+      })),
+    ],
     auto_scrape: false,
     auto_organize: false,
     library_dir: "library",
@@ -254,6 +293,17 @@ try {
       "comment",
     ],
     backup_days: 7,
+    watch_enabled: false,
+    watch_dirs: ["incoming"],
+    watch_failure_dir: "",
+    watch_interval: 180,
+    watch_stable_seconds: 30,
+    watch_action: "both",
+    watch_apply: true,
+    chinese: "none",
+    repair_encoding: false,
+    tools: { ffmpeg: true, fpcalc: true },
+    has_acoustid_key: false,
     navidrome: {
       enabled: false,
       url: "",
@@ -264,6 +314,7 @@ try {
     },
   };
   const libraryJobs = [];
+  let lastLibraryBody;
   const remoteTrack = {
     ...localTrack,
     id: "navidrome-s",
@@ -295,6 +346,15 @@ try {
       if (method === "PUT")
         libraryConfig = { ...libraryConfig, ...request.postDataJSON() };
       result = libraryConfig;
+    } else if (p === "/library/watch/scan") {
+      result = { queued: 0, detail: "已检查监控目录，正在等待文件稳定" };
+    } else if (p === "/library/watch") {
+      result = { checked_at: 1792700000, detail: "目录检查成功" };
+    } else if (p === "/library/credentials") {
+      libraryConfig.has_acoustid_key = !!request.postDataJSON().acoustid_key;
+      result = { has_acoustid_key: libraryConfig.has_acoustid_key };
+    } else if (p === "/library/versions") {
+      result = { versions: [] };
     } else if (p === "/library/navidrome") {
       const { password, api_key, ...settings } = request.postDataJSON();
       libraryConfig.navidrome = {
@@ -307,6 +367,7 @@ try {
     } else if (p === "/library/jobs") {
       if (method === "POST") {
         const body = request.postDataJSON();
+        lastLibraryBody = body;
         const before = {
           title: localTrack.title,
           artist: localTrack.artist,
@@ -315,6 +376,11 @@ try {
         result = {
           id: `library-${libraryJobs.length}`,
           action: body.action,
+          settings: {
+            sources: body.sources || libraryConfig.sources,
+            overwrite: body.overwrite ?? libraryConfig.overwrite,
+            fields: libraryConfig.fields,
+          },
           status: "ready",
           detail: "检查完成，请预览修改后应用",
           created_at: 1792700000,
@@ -333,10 +399,33 @@ try {
               before,
               after: { ...before, ...body.changes },
               status: "ready",
-              candidates: [],
-              chosen: null,
+              candidates: body.sources
+                ? [
+                    {
+                      id: "mb-fixture",
+                      source: "musicbrainz",
+                      title: localTrack.title,
+                      artist: localTrack.artist,
+                      album: localTrack.album,
+                      score: 100,
+                      reasons: ["标题一致", "歌手一致", "专辑一致"],
+                      conflicts: [],
+                      field_sources: { lyrics: "qq" },
+                    },
+                  ]
+                : [],
+              chosen: body.sources ? "mb-fixture" : null,
               locks: [],
               warnings: [],
+              ...(["convert", "split"].includes(body.action)
+                ? {
+                    outputs: [
+                      {
+                        path: "/music/通勤/测试音乐 - converted/测试音乐.flac",
+                      },
+                    ],
+                  }
+                : {}),
             },
           ],
         };
@@ -978,6 +1067,173 @@ try {
     .getByRole("button", { name: "确认恢复本次修改", exact: true })
     .click();
   await expect(page.locator(".processing-heading")).toContainText("已恢复");
+  await page.getByRole("button", { name: "刮削整理", exact: true }).click();
+  await expect(page.locator(".workbench-submit")).toContainText(
+    "已选 1 首歌曲",
+  );
+  await page.getByLabel("搜索音乐文件", { exact: true }).fill("没有这首歌");
+  await expect(
+    page.getByRole("button", { name: "生成修改预览", exact: true }),
+  ).toBeDisabled();
+  await page.getByLabel("搜索音乐文件", { exact: true }).fill("");
+  await page.getByLabel("全选音乐文件").check();
+  await page.locator(".workbench-sources summary").click();
+  await page.getByLabel("MusicBrainz", { exact: true }).check();
+  await page
+    .locator(".metadata-source")
+    .filter({ hasText: "网易云" })
+    .getByRole("checkbox")
+    .uncheck();
+  await page
+    .locator(".metadata-source")
+    .filter({ hasText: "QQ音乐" })
+    .getByRole("checkbox")
+    .uncheck();
+  await page
+    .getByLabel("覆盖已有标签（手动锁定字段始终保留）", { exact: true })
+    .check();
+  await page.screenshot({
+    path: "../output/test-ui-workbench.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.screenshot({
+    path: "../output/test-ui-workbench-mobile.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "生成修改预览", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "应用已确认的更改", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".processing-rules")).toContainText("MusicBrainz");
+  await expect(page.locator(".processing-rules")).toContainText(
+    "覆盖未锁定标签",
+  );
+  await expect(page.getByText(/补充资料来源：/)).toContainText(
+    "歌词（QQ音乐）",
+  );
+  assert.deepEqual(lastLibraryBody.sources, ["musicbrainz"]);
+  assert.deepEqual(lastLibraryBody.paths, ["fixture-a.wav"]);
+  assert.equal(lastLibraryBody.overwrite, true);
+  assert.equal(libraryJobs[0].status, "ready");
+  assert.deepEqual(libraryConfig.sources, ["netease", "qq"]);
+  await page.getByRole("button", { name: "全部任务", exact: true }).click();
+  await page.getByRole("button", { name: "待确认", exact: true }).click();
+  await expect(
+    page.getByText("没有符合条件的任务", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "待应用", exact: true }).click();
+  await expect(page.locator(".processing-list-row")).toHaveCount(2);
+  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByLabel("全选音乐文件").check();
+  await page.getByLabel("更多音乐管理操作").selectOption("rename");
+  await page
+    .getByLabel("文件名模板", { exact: true })
+    .fill("${counter.zfill(2)} - ${title}");
+  await page.getByRole("button", { name: "预览修改", exact: true }).click();
+  await expect(page.locator(".processing-heading")).toContainText("批量重命名");
+  assert.equal(
+    lastLibraryBody.filename_template,
+    "${counter.zfill(2)} - ${title}",
+  );
+  await expect(page.getByRole("link", { name: "导出处理报告" })).toBeVisible();
+  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByLabel("更多音乐管理操作").selectOption("duplicates");
+  await page.getByLabel("检查方式", { exact: true }).selectOption("audio");
+  await page.getByRole("button", { name: "预览修改", exact: true }).click();
+  await expect(page.locator(".processing-heading")).toContainText(
+    "重复文件检查",
+  );
+  assert.equal(lastLibraryBody.duplicate_mode, "audio");
+  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByLabel("更多音乐管理操作").selectOption("convert");
+  await page.getByLabel("输出格式", { exact: true }).selectOption("opus");
+  await page.getByLabel("采样率", { exact: true }).selectOption("48000");
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.screenshot({ path: "../output/test-ui-convert-mobile.png" });
+  await page.getByRole("button", { name: "预览修改", exact: true }).click();
+  await expect(page.locator(".processing-heading")).toContainText("格式转换");
+  assert.equal(lastLibraryBody.output_format, "opus");
+  assert.equal(lastLibraryBody.sample_rate, 48000);
+  await expect(
+    page.getByText("输出文件（原件保留）", { exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByLabel("更多音乐管理操作").selectOption("split");
+  await page
+    .getByLabel("CUE 文本（可选）", { exact: true })
+    .fill('FILE "测试音乐.wav" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00');
+  await page.getByRole("button", { name: "预览修改", exact: true }).click();
+  await expect(page.locator(".processing-heading")).toContainText("CUE 分轨");
+  assert.match(lastLibraryBody.cue, /INDEX 01/);
+  await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
+  await page.getByLabel("更多音乐管理操作").selectOption("clean");
+  await page.getByLabel("中文转换", { exact: true }).selectOption("simplified");
+  await page
+    .getByLabel("修复 UTF-8 被按 Latin1 误读的乱码", { exact: true })
+    .check();
+  await page.getByRole("button", { name: "预览修改", exact: true }).click();
+  await expect(page.locator(".processing-heading")).toContainText("清理标签");
+  assert.equal(lastLibraryBody.chinese, "simplified");
+  assert.equal(lastLibraryBody.repair_encoding, true);
+  await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
+  await page.getByLabel("处理范围", { exact: true }).selectOption("directory");
+  await page.getByLabel("目录路径", { exact: true }).fill("incoming");
+  await page.getByRole("button", { name: "生成修改预览", exact: true }).click();
+  await expect(page.locator(".processing-heading")).toBeVisible();
+  assert.equal(lastLibraryBody.scope_dir, "incoming");
+  assert.deepEqual(lastLibraryBody.paths, []);
+  await page.getByRole("tab", { name: "来源与归档规则", exact: true }).click();
+  await page.getByText("目录监控与预处理", { exact: true }).click();
+  await page.getByLabel("启用目录监控", { exact: true }).check();
+  await page
+    .getByLabel("监控目录（每行一个）", { exact: true })
+    .fill("incoming\nimports");
+  await page
+    .getByLabel("未匹配/失败文件目录（可选）", { exact: true })
+    .fill("review");
+  await page.getByRole("button", { name: "保存曲库设置", exact: true }).click();
+  await expect(
+    page.getByText("曲库设置已保存，后续新建任务将使用这些默认规则。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  assert.deepEqual(libraryConfig.watch_dirs, ["incoming", "imports"]);
+  assert.equal(libraryConfig.watch_failure_dir, "review");
+  assert.equal(libraryConfig.watch_enabled, true);
+  await page
+    .getByRole("button", { name: "检查已保存的监控目录", exact: true })
+    .click();
+  await expect(
+    page.getByText("已检查监控目录，正在等待文件稳定", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("AcoustID 应用 Key", { exact: true })
+    .fill("fixture-key");
+  await page.getByRole("button", { name: "保存指纹配置", exact: true }).click();
+  await expect(
+    page.getByText("Key 已配置 · fpcalc 已找到", { exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.screenshot({ path: "../output/test-ui-library-watch-mobile.png" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("tab", { name: "Navidrome", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "远程专辑", exact: false }),
@@ -1192,6 +1448,12 @@ try {
   await page.getByLabel("下载 测试曲目", { exact: true }).click();
   await page.getByRole("dialog").getByLabel("关闭", { exact: true }).click();
   await page.getByRole("button", { name: "音源与设置", exact: true }).click();
+  await page.getByRole("button", { name: "刮削整理", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "生成修改预览", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("tab", { name: "来源与归档规则", exact: true }).click();
+  await expect(page.getByText("MusicBrainz", { exact: true })).toBeVisible();
   await page.getByText("下载后自动刮削", { exact: true }).click();
   await page.getByText("下载后自动整理入库", { exact: true }).click();
   await page.getByRole("button", { name: "保存曲库设置", exact: true }).click();
@@ -1239,6 +1501,7 @@ try {
   });
   await page.getByLabel("界面主题").selectOption("light");
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "音源与设置", exact: true }).click();
   await page.locator(".source-setting").first().waitFor({ state: "attached" });
   assert.equal(await page.locator(".source-setting").count(), 8);
   const sourceDisclosure = page.locator(".settings-sources .source-disclosure");
@@ -1511,7 +1774,19 @@ try {
   await expect(page.locator(".saved-playlist")).toContainText("晚间歌单");
   await page.screenshot({ path: "../output/test-ui-playlist-library.png" });
   await page.reload();
-  await page.getByRole("button", { name: "我的歌单", exact: true }).click();
+  await page.getByRole("button", { name: /^收藏与歌单/ }).click();
+  await page
+    .locator(".collection-tabs")
+    .getByRole("button", { name: /^我的收藏/ })
+    .click();
+  await expect(page.locator(".track-table tbody tr")).toHaveCount(1);
+  await expect(
+    page.locator('nav[aria-label="主导航"] button.active'),
+  ).toContainText("收藏与歌单");
+  await page
+    .locator(".collection-tabs")
+    .getByRole("button", { name: /^我的歌单/ })
+    .click();
   await expect(page.locator(".saved-playlist")).toContainText("晚间歌单");
   await page.locator(".saved-playlist").click();
   await expect(page.locator(".playlist-heading h2")).toHaveText("晚间歌单");

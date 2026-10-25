@@ -109,6 +109,13 @@ class FileTagsBody(BaseModel):
     genre: str | None = Field(default=None, max_length=300)
     composer: str | None = Field(default=None, max_length=300)
     comment: str | None = Field(default=None, max_length=2000)
+    lyricist: str | None = Field(default=None, max_length=300)
+    language: str | None = Field(default=None, max_length=100)
+    copyright: str | None = Field(default=None, max_length=300)
+    publisher: str | None = Field(default=None, max_length=300)
+    grouping: str | None = Field(default=None, max_length=300)
+    bpm: str | None = Field(default=None, max_length=30)
+    isrc: str | None = Field(default=None, max_length=100)
 
 
 def install(old, root):
@@ -1175,13 +1182,8 @@ def install(old, root):
         if target.suffix.lower() not in local_library.AUDIO_EXTENSIONS:
             raise HTTPException(400, '请选择音频文件')
         try:
-            with library.lock(target):
-                changes = {key: value.strip() for key, value in body.model_dump(exclude_unset=True).items() if value is not None}
-                info = target.stat()
-                before = local_library.read_metadata(str(target), info.st_mtime_ns, info.st_size)
-                changes = {key: value for key, value in changes.items() if value != before.get(key, '')}
-                local_library.write_metadata(target, changes)
-                library.lock_fields(target, changes)
+            changes = {key: value.strip() for key, value in body.model_dump(exclude_unset=True).items() if value is not None}
+            library.edit_tags(target, changes)
         except (ValueError, local_library.mutagen.MutagenError) as error:
             raise HTTPException(400, f'无法编辑标签：{error}')
         except OSError:

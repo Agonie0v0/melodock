@@ -7,3 +7,5 @@ mutagen>=1.47,<2
 requests>=2.32,<3
 requests-toolbelt>=1.0,<2
 cryptography>=44,<51
+opencc-python-reimplemented>=0.1.7,<0.2
+pypinyin>=0.53,<1

@@ -360,9 +360,12 @@ def test_local_song_library_plays_and_edits_real_audio_tags():
     client.put('/api/playlist', json=[track['id']], headers=HEADERS)
     client.put(f'/api/favorites/{track["id"]}', headers=HEADERS)
     updated = client.patch('/api/files/tags', params={'path': file['path']}, headers=HEADERS,
-                           json={'title': '新标题', 'artist': '新歌手', 'album': '新专辑'})
+                           json={'title': '新标题', 'artist': '新歌手', 'album': '新专辑', 'lyricist': '新作词', 'language': 'zho', 'bpm': '123'})
     assert updated.status_code == 200, updated.text
     assert updated.json()['track']['title'] == '新标题'
+    assert updated.json()['metadata']['lyricist'] == '新作词' and updated.json()['metadata']['bpm'] == '123'
+    versions = client.get('/api/library/versions', params={'path': file['path']}).json()['versions']
+    assert versions[0]['restorable'] and versions[0]['after']['language'] == 'zho'
     assert client.get('/api/playlist').json()[0]['title'] == '新标题'
     native = WAVE(audio)
     assert native.tags['TXXX:keep'].text == ['unchanged'] and native.tags.getall('APIC')[0].data == b'png-fixture'
@@ -597,6 +600,7 @@ def test_download_automatically_scrapes_organizes_and_retains_signed_link(monkey
     client = TestClient(app.app)
     state = app.app.state.engine_test
     pipeline = state['library']
+    monkeypatch.setattr(pipeline.scraper, 'search', lambda *args: ([], []))
     previous = pipeline.settings()
     cfg = copy.deepcopy(app.original.manager.config)
     cfg['global_client_cfg']['work_dir'] = str(_root / 'music' / 'automatic')

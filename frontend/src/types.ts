@@ -96,6 +96,26 @@ export interface LibraryConfig {
   fields: string[];
   backup_days: number;
   navidrome: NavidromeConfig;
+  metadata_sources?: MetadataSource[];
+  chinese?: string;
+  repair_encoding?: boolean;
+  watch_enabled?: boolean;
+  watch_dirs?: string[];
+  watch_interval?: number;
+  watch_stable_seconds?: number;
+  watch_action?: string;
+  watch_apply?: boolean;
+  watch_failure_dir?: string;
+  has_acoustid_key?: boolean;
+  tools?: Record<string, boolean>;
+}
+export interface MetadataSource {
+  id: string;
+  label: string;
+  description: string;
+  fields: string[];
+  note: string;
+  url: string;
 }
 export interface MetadataCandidate {
   id: string;
@@ -106,6 +126,7 @@ export interface MetadataCandidate {
   score: number;
   reasons: string[];
   conflicts: string[];
+  field_sources?: Record<string, string>;
   [key: string]: unknown;
 }
 export interface LibraryJobItem {
@@ -123,6 +144,9 @@ export interface LibraryJobItem {
   warnings: string[];
   error?: string;
   operation_id?: string;
+  quality?: Record<string, number | null>;
+  outputs?: { path: string; start?: number; end?: number }[];
+  artwork?: { artist: string; source: string; url: string };
 }
 export interface LibraryJob {
   id: string;
@@ -135,6 +159,7 @@ export interface LibraryJob {
   detail: string;
   items?: LibraryJobItem[];
   warnings: string[];
+  settings?: Pick<LibraryConfig, "sources" | "overwrite" | "fields">;
   duplicates?: { id: string; name: string; path: string }[][];
 }
 export interface SourceStatus {

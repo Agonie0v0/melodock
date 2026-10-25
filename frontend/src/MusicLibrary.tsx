@@ -31,6 +31,7 @@ export function MusicLibrary({
   remove,
   changed,
   manage,
+  processing = false,
 }: {
   files: LibraryFile[];
   selected: string[];
@@ -45,6 +46,7 @@ export function MusicLibrary({
   remove: (files: LibraryFile[]) => void;
   changed: (file: LibraryFile) => void;
   manage?: (action: LibraryAction, files: LibraryFile[]) => void;
+  processing?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [folder, setFolder] = useState("all");
@@ -114,7 +116,7 @@ export function MusicLibrary({
     <section className="view music-library">
       <div className="library-heading">
         <div>
-          <h2>歌曲库</h2>
+          <h2>{processing ? "选择要处理的歌曲" : "歌曲库"}</h2>
           <p>
             {songs} 首歌曲 · {folders.length} 个文件夹
           </p>
@@ -171,7 +173,10 @@ export function MusicLibrary({
               aria-label="搜索音乐文件"
               placeholder="搜索歌曲、歌手或专辑"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setSelected([]);
+              }}
             />
             <select
               aria-label="音乐库排序"
@@ -215,41 +220,49 @@ export function MusicLibrary({
             <span>已选 {chosen.length} 项</span>
             {mode === "songs" && (
               <>
-                <button
-                  className="primary"
-                  disabled={!playable.length || busy}
-                  onClick={() =>
-                    playAll(selectedTracks.length ? selectedTracks : playable)
-                  }
-                >
-                  <Play />
-                  {selectedTracks.length ? "播放选中" : "播放全部"}
-                </button>
-                <button
-                  className="secondary"
-                  disabled={!selectedTracks.length || busy}
-                  onClick={() => queue(selectedTracks)}
-                >
-                  加入待播
-                </button>
+                {!processing && (
+                  <button
+                    className="primary"
+                    disabled={!playable.length || busy}
+                    onClick={() =>
+                      playAll(selectedTracks.length ? selectedTracks : playable)
+                    }
+                  >
+                    <Play />
+                    {selectedTracks.length ? "播放选中" : "播放全部"}
+                  </button>
+                )}
+                {!processing && (
+                  <button
+                    className="secondary"
+                    disabled={!selectedTracks.length || busy}
+                    onClick={() => queue(selectedTracks)}
+                  >
+                    加入待播
+                  </button>
+                )}
                 {manage && (
                   <>
-                    <button
-                      className="secondary"
-                      disabled={!chosen.some((file) => file.track) || busy}
-                      onClick={() => manage("both", chosen)}
-                    >
-                      <WandSparkles />
-                      刮削并整理
-                    </button>
-                    <button
-                      className="secondary"
-                      disabled={!chosen.some((file) => file.track) || busy}
-                      onClick={() => manage("organize", chosen)}
-                    >
-                      <FolderSync />
-                      整理目录
-                    </button>
+                    {!processing && (
+                      <button
+                        className="secondary"
+                        disabled={!chosen.some((file) => file.track) || busy}
+                        onClick={() => manage("both", chosen)}
+                      >
+                        <WandSparkles />
+                        刮削并整理
+                      </button>
+                    )}
+                    {!processing && (
+                      <button
+                        className="secondary"
+                        disabled={!chosen.some((file) => file.track) || busy}
+                        onClick={() => manage("organize", chosen)}
+                      >
+                        <FolderSync />
+                        整理目录
+                      </button>
+                    )}
                     <select
                       className="library-tool-select"
                       aria-label="更多音乐管理操作"
@@ -265,7 +278,17 @@ export function MusicLibrary({
                       <option value="edit">编辑标签、歌词与封面</option>
                       <option value="extract">从文件名提取标签</option>
                       <option value="clean">清理与替换标签文本</option>
-                      <option value="duplicates">检查完全相同的文件</option>
+                      <option value="rename">按标签批量重命名</option>
+                      <option value="export_lyrics">导出内嵌歌词到 LRC</option>
+                      <option value="import_lyrics">嵌入同名 LRC 歌词</option>
+                      <option value="export_cover">导出内嵌专辑封面</option>
+                      <option value="import_cover">嵌入同名或目录封面</option>
+                      <option value="artist_artwork">刮削艺术家图片</option>
+                      <option value="duplicates">检查重复歌曲</option>
+                      <option value="quality">检查音频完整性与参数</option>
+                      <option value="convert">转换音频格式</option>
+                      <option value="split">CUE 分轨</option>
+                      <option value="clear">清空内嵌标签</option>
                     </select>
                   </>
                 )}

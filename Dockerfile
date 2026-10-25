@@ -20,7 +20,7 @@ RUN git init . && git remote add origin https://github.com/tdlib/telegram-bot-ap
 
 FROM python:3.14-slim-bookworm
 LABEL org.opencontainers.image.source="https://github.com/Agonie0v0/musicdl"
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg curl libssl3 zlib1g libstdc++6 \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg libchromaprint-tools curl libssl3 zlib1g libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 musicdl && useradd --uid 10001 --gid musicdl --create-home musicdl \
     && mkdir -p /music /data /app/frontend /licenses && chown -R musicdl:musicdl /music /data /app
@@ -28,7 +28,7 @@ WORKDIR /app
 ENV HOME=/home/musicdl
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py engine_api.py engine_worker.py search_runtime.py provider_compat.py local_library.py library_pipeline.py metadata_scraper.py navidrome.py resumable_download.py bot_notifications.py telegram_local.py error_messages.py docker-entrypoint.py ./
+COPY app.py engine_api.py engine_worker.py search_runtime.py provider_compat.py local_library.py library_pipeline.py library_rules.py audio_tools.py metadata_scraper.py navidrome.py resumable_download.py bot_notifications.py telegram_local.py error_messages.py docker-entrypoint.py ./
 COPY legacy/app.py ./legacy/app.py
 COPY --from=frontend /build/frontend/dist /app/frontend/dist
 COPY LICENSE-musicsquare LICENSE-musicdl-reference /licenses/
