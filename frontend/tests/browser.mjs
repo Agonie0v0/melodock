@@ -779,32 +779,15 @@ try {
     await page.getByRole("tab", { name: tab, exact: true }).click();
   };
   const changeTheme = async (theme) => {
-    const active = page.locator(".sidebar .nav-item.active");
-    const name = await active.evaluate((button) => {
-      const copy = button.cloneNode(true);
-      copy.querySelector(".nav-count")?.remove();
-      return copy.textContent.trim();
-    });
-    const collection = page.locator('.collection-tabs [aria-current="page"]');
-    const subsection = (await collection.count())
-      ? await collection.textContent()
-      : null;
-    const selectedTab = page.getByRole("tab", { selected: true });
-    const tab = (await selectedTab.count())
-      ? await selectedTab.textContent()
-      : null;
-    await openSettings("外观");
-    await page.getByLabel("界面主题", { exact: true }).selectOption(theme);
-    await page
-      .locator(".sidebar")
-      .getByRole("button", { name, exact: name !== "歌单" })
+    await page.getByRole("button", { name: "切换主题", exact: true }).click();
+    const options = page.getByRole("group", { name: "界面主题", exact: true });
+    await options
+      .getByRole("button", {
+        name: { system: "跟随系统", light: "浅色", dark: "深色" }[theme],
+        exact: true,
+      })
       .click();
-    if (subsection)
-      await page
-        .locator(".collection-tabs")
-        .getByRole("button", { name: subsection, exact: true })
-        .click();
-    if (tab) await page.getByRole("tab", { name: tab, exact: true }).click();
+    await expect(options).toBeHidden();
   };
   await page.addInitScript(() => {
     if (sessionStorage.getItem("rebrand-migration-seeded")) return;
@@ -930,7 +913,6 @@ try {
       "刮削与归档",
       "Navidrome 连接",
       "通知与机器人",
-      "外观",
     ]);
     await expect(page.getByRole("tab", { selected: true })).toHaveText(
       "刮削与归档",
@@ -943,8 +925,14 @@ try {
     await page.screenshot({
       path: `../output/test-ui-grouped-settings-${width}.png`,
     });
-    await page.getByRole("tab", { name: "外观", exact: true }).click();
-    await expect(page.getByLabel("界面主题", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("tab", { name: "外观", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "切换主题", exact: true }).click();
+    await expect(
+      page.getByRole("group", { name: "界面主题", exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
     assert.ok(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -954,7 +942,9 @@ try {
     await sidebar
       .getByRole("button", { name: "搜索音乐", exact: true })
       .click();
-    await expect(page.getByLabel("界面主题", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("group", { name: "界面主题", exact: true }),
+    ).toBeHidden();
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: "../output/test-ui-home.png" });
@@ -1098,6 +1088,26 @@ try {
     .poll(() => page.locator("audio").evaluate((a) => a.volume))
     .toBe(0.65);
   const controlsBox = await page.locator(".full-player-controls").boundingBox();
+  for (const width of [320, 390, 801, 1024, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const controls = page.locator(".full-player-controls");
+    const panel = await controls.boundingBox();
+    const transport = await controls.locator(".transport").boundingBox();
+    const volume = await controls.locator(".player-extras").boundingBox();
+    assert.ok(
+      Math.abs(
+        transport.y + transport.height / 2 - volume.y - volume.height / 2,
+      ) < 2,
+      `volume and playback share a row at ${width}`,
+    );
+    assert.ok(
+      transport.x >= panel.x &&
+        volume.x + volume.width <= panel.x + panel.width &&
+        transport.x + transport.width <= volume.x,
+      `playback controls fit without overlap at ${width}`,
+    );
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   const actionBoxes = await Promise.all(
     (await page.locator(".album-actions button").all()).map((b) =>
       b.boundingBox(),
@@ -2441,7 +2451,7 @@ try {
   for (const width of [320, 390, 600]) {
     await page.setViewportSize({ width, height: 844 });
     assert.ok(
-      await page.locator(".sidebar-capsules").evaluate((strip) => {
+      await page.locator(".sidebar nav").evaluate((strip) => {
         strip.scrollLeft = strip.scrollWidth;
         const scrolls =
           strip.scrollWidth > strip.clientWidth && strip.scrollLeft > 0;
@@ -2460,7 +2470,23 @@ try {
     );
     await expect(projectLink).toHaveAttribute("target", "_blank");
     const navButtons = page.locator(".sidebar-capsules .nav-item");
-    await expect(navButtons).toHaveCount(9);
+    await expect(navButtons).toHaveCount(8);
+    const themeButton = await page
+      .getByRole("button", { name: "切换主题", exact: true })
+      .boundingBox();
+    const logoutButton = page.getByRole("button", {
+      name: "退出登录",
+      exact: true,
+    });
+    const logoutBox = await logoutButton.boundingBox();
+    assert.equal((await logoutButton.textContent()).trim(), "");
+    assert.ok(
+      themeButton.x + themeButton.width <= logoutBox.x &&
+        logoutBox.x + logoutBox.width <= width &&
+        themeButton.height >= 44 &&
+        logoutBox.height >= 44,
+      `header icon tools stay at the right edge at ${width}`,
+    );
     const boxes = [];
     for (const button of await navButtons.all()) {
       await expect(button).toBeVisible();

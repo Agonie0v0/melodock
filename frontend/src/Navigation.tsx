@@ -66,7 +66,7 @@ export function Navigation({
     save(next);
   }
   return (
-    <>
+    <div className="navigation-group">
       <nav aria-label="主导航">
         {order.map((id, index) => {
           const [, label, Icon] = items.find(([value]) => value === id)!;
@@ -167,6 +167,6 @@ export function Navigation({
           恢复默认顺序
         </button>
       </div>
-    </>
+    </div>
   );
 }

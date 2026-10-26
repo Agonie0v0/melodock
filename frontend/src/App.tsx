@@ -1,6 +1,7 @@
 import { Cover, Button, Lyrics, Modal } from "./components";
 import { SettingsWorkspace, type SettingsTab } from "./SettingsWorkspace";
 import { Navigation } from "./Navigation";
+import { ThemePicker } from "./ThemePicker";
 import { RuntimeLogs } from "./RuntimeLogs";
 import { LibraryWorkspace } from "./LibraryWorkspace";
 import { processingLabels } from "./LibrarySettings";
@@ -65,7 +66,7 @@ const views = {
   files: ["音乐库", "浏览与播放本地音乐和 Navidrome 曲库"],
   organize: ["刮削整理", "补全音乐资料、审核版本并安全归档"],
   logs: ["运行日志", "实时查看搜索、下载与报错详情"],
-  settings: ["设置", "音源、刮削规则、服务连接与界面偏好"],
+  settings: ["设置", "音源、刮削规则、服务连接与通知"],
 } as const;
 type View = keyof typeof views;
 const bytes = (n: number) =>
@@ -1427,44 +1428,46 @@ export function App() {
                 ).length
               }
             />
-            <div className="sidebar-bottom">
-              {current && (
-                <button
-                  className="sidebar-record"
-                  onClick={() => setView("player")}
-                >
-                  <Cover track={current} />
-                  <span>
-                    <strong>{current.title}</strong>
-                    <small>{current.artist}</small>
-                  </span>
-                  <AudioLines />
-                </button>
-              )}
-              <div className="user">
-                <span className="avatar">
-                  <Music2 />
-                </span>
-                <span>
-                  本地音乐库
-                  <small>
-                    {favorites.length} 首收藏 · {playlist.length} 首待播
-                  </small>
-                </span>
-              </div>
+          </div>
+          <div className="sidebar-bottom">
+            <ThemePicker theme={theme} change={setTheme} />
+            {current && (
               <button
-                className="nav-item logout"
-                onClick={() =>
-                  void api("/auth/logout", "POST")
-                    .then(() => api<{ required: boolean }>("/auth/status"))
-                    .then((s) => s.required && setLoginRequired(true))
-                    .catch(fail)
-                }
+                className="sidebar-record"
+                onClick={() => setView("player")}
               >
-                <LogOut />
-                退出登录
+                <Cover track={current} />
+                <span>
+                  <strong>{current.title}</strong>
+                  <small>{current.artist}</small>
+                </span>
+                <AudioLines />
               </button>
+            )}
+            <div className="user">
+              <span className="avatar">
+                <Music2 />
+              </span>
+              <span>
+                本地音乐库
+                <small>
+                  {favorites.length} 首收藏 · {playlist.length} 首待播
+                </small>
+              </span>
             </div>
+            <button
+              className="icon-button logout"
+              aria-label="退出登录"
+              title="退出登录"
+              onClick={() =>
+                void api("/auth/logout", "POST")
+                  .then(() => api<{ required: boolean }>("/auth/status"))
+                  .then((s) => s.required && setLoginRequired(true))
+                  .catch(fail)
+              }
+            >
+              <LogOut aria-hidden="true" />
+            </button>
           </div>
         </aside>
         <main className="workspace">
@@ -1938,43 +1941,45 @@ export function App() {
                         />
                         <span>{clock(duration)}</span>
                       </div>
-                      <div className="transport">
-                        <Button
-                          label="切换随机播放"
-                          active={shuffle}
-                          onClick={() => setShuffle((v) => !v)}
-                        >
-                          <Shuffle />
-                        </Button>
-                        <Button label="上一首" onClick={() => step(-1)}>
-                          <SkipBack />
-                        </Button>
-                        <button
-                          className="pause"
-                          aria-label={playing ? "暂停" : "播放"}
-                          disabled={loadingPlay}
-                          onClick={() => void toggle()}
-                        >
-                          {loadingPlay ? (
-                            <span className="loading-dot" />
-                          ) : playing ? (
-                            <Pause />
-                          ) : (
-                            <Play />
-                          )}
-                        </button>
-                        <Button label="下一首" onClick={() => step(1)}>
-                          <SkipForward />
-                        </Button>
-                        <Button
-                          label="切换列表循环"
-                          active={repeat}
-                          onClick={() => setRepeat((v) => !v)}
-                        >
-                          <Repeat />
-                        </Button>
+                      <div className="now-transport-row">
+                        <div className="transport">
+                          <Button
+                            label="切换随机播放"
+                            active={shuffle}
+                            onClick={() => setShuffle((v) => !v)}
+                          >
+                            <Shuffle />
+                          </Button>
+                          <Button label="上一首" onClick={() => step(-1)}>
+                            <SkipBack />
+                          </Button>
+                          <button
+                            className="pause"
+                            aria-label={playing ? "暂停" : "播放"}
+                            disabled={loadingPlay}
+                            onClick={() => void toggle()}
+                          >
+                            {loadingPlay ? (
+                              <span className="loading-dot" />
+                            ) : playing ? (
+                              <Pause />
+                            ) : (
+                              <Play />
+                            )}
+                          </button>
+                          <Button label="下一首" onClick={() => step(1)}>
+                            <SkipForward />
+                          </Button>
+                          <Button
+                            label="切换列表循环"
+                            active={repeat}
+                            onClick={() => setRepeat((v) => !v)}
+                          >
+                            <Repeat />
+                          </Button>
+                        </div>
+                        {volumeControl}
                       </div>
-                      {volumeControl}
                     </div>
                     <div className="album-actions">
                       <button
@@ -2490,8 +2495,6 @@ export function App() {
               saved={load}
               tab={settingsTab}
               setTab={setSettingsTab}
-              theme={theme}
-              setTheme={setTheme}
             />
           )}
           {view === "logs" && <RuntimeLogs active={!loginRequired} />}

@@ -602,7 +602,7 @@ def test_exact_song_info_persists_and_original_downloader_saves_audio(monkeypatc
     folders = {'source': [song.source], 'flat': [], 'artist': [song.singers],
                'artist_album': [song.singers, song.album]}
     audio_path = app.app.state.engine_test['library'].resolve(job['file'])
-    assert audio_path == base.joinpath(*folders[layout], 'Generated integration audio - Tests.wav')
+    assert audio_path.samefile(base.joinpath(*folders[layout], 'Generated integration audio - Tests.wav'))
     response = client.get('/api/files/content', params={'path': job['file']})
     assert response.status_code == 200
     with wave.open(io.BytesIO(response.content)) as audio:
