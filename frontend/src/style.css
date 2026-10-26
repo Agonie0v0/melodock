@@ -1491,6 +1491,10 @@ tr.current {
   margin: 0 0 14px;
   container-type: inline-size;
 }
+.full-player-controls .now-transport-row {
+  justify-content: center;
+  gap: 12px;
+}
 .full-player-controls .now-transport-row .transport {
   flex: none;
   gap: 4px;
@@ -3282,7 +3286,7 @@ dialog::backdrop {
   .album-column {
     display: contents;
   }
-  .album-art {
+  .playback-grid .album-art {
     grid-column: 1;
     grid-row: 1 / span 2;
     width: 68px;
@@ -3291,10 +3295,10 @@ dialog::backdrop {
     margin: 0;
     border-radius: 14px;
   }
-  .album-art .record-fallback > span {
+  .playback-grid .album-art .record-fallback > span {
     border-width: 3px;
   }
-  .album-art .record-fallback svg {
+  .playback-grid .album-art .record-fallback svg {
     width: 16px;
     height: 16px;
   }
@@ -3700,7 +3704,7 @@ dialog::backdrop {
     grid-template-columns: 56px minmax(0, 1fr);
     gap: 6px 10px;
   }
-  .album-art {
+  .playback-grid .album-art {
     width: 56px;
     height: 56px;
     max-width: 56px;
@@ -4419,7 +4423,7 @@ dialog::backdrop {
 }
 @media (max-width: 600px) {
   .navigation-order {
-    inset: 104px 16px auto auto;
+    inset: 76px 16px auto auto;
   }
 }
 
@@ -4427,7 +4431,7 @@ dialog::backdrop {
   text-decoration: none;
 }
 
-/* Keep navigation tools attached to their group and account tools at the edge. */
+/* Keep navigation centered and shared tools at the right edge. */
 .sidebar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -4508,6 +4512,9 @@ dialog::backdrop {
   width: 16px;
   height: 16px;
 }
+@position-try --header-menu-in-viewport {
+  right: 16px;
+}
 @supports (top: anchor(bottom)) {
   .theme-picker,
   .navigation-order {
@@ -4515,7 +4522,10 @@ dialog::backdrop {
     top: anchor(bottom);
     right: anchor(right);
     margin-top: 8px;
-    position-try-fallbacks: flip-inline, flip-block;
+    position-try-fallbacks:
+      --header-menu-in-viewport,
+      flip-block,
+      --header-menu-in-viewport flip-block;
   }
   .theme-picker {
     position-anchor: --theme-trigger;
@@ -4525,8 +4535,7 @@ dialog::backdrop {
   }
 }
 @media (max-width: 900px) {
-  .sidebar .sidebar-bottom .icon-button,
-  .navigation-group > .icon-button {
+  .sidebar .sidebar-bottom .icon-button {
     width: 44px;
     height: 44px;
   }

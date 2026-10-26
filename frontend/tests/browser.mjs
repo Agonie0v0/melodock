@@ -325,6 +325,7 @@ try {
     source: "navidrome",
     source_id: "s",
     title: "远程歌曲",
+    cover: `${base}/test-cover.svg`,
     playback: { ...localTrack.playback, url: "/api/navidrome/stream/s" },
   };
   let remoteLyrics =
@@ -372,7 +373,7 @@ try {
               created_at: 1792700000,
               track_count: 1,
               issue_count: 0,
-              cover: null,
+              cover: remoteTrack.cover,
               detail: "自动同步",
               task_id: "",
             },
@@ -1096,7 +1097,7 @@ try {
     .poll(() => page.locator("audio").evaluate((a) => a.volume))
     .toBe(0.65);
   const controlsBox = await page.locator(".full-player-controls").boundingBox();
-  for (const width of [320, 390, 801, 1024, 1440, 1920]) {
+  for (const width of [320, 390, 680, 800, 801, 1024, 1440, 1920]) {
     await page.setViewportSize({ width, height: 1000 });
     const controls = page.locator(".full-player-controls");
     const panel = await controls.boundingBox();
@@ -1114,6 +1115,19 @@ try {
         transport.x + transport.width <= volume.x,
       `playback controls fit without overlap at ${width}`,
     );
+    assert.ok(
+      volume.x - transport.x - transport.width <= 12.5 &&
+        Math.abs(
+          (transport.x + volume.x + volume.width) / 2 -
+            panel.x -
+            panel.width / 2,
+        ) < 1,
+      `playback and volume form a compact centered group at ${width}`,
+    );
+    if (width === 680)
+      await controls.screenshot({
+        path: "../output/test-ui-player-controls.png",
+      });
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
   const actionBoxes = await Promise.all(
@@ -2311,6 +2325,20 @@ try {
   await expect(
     page.locator(".saved-playlist").filter({ hasText: remotePlaylistName }),
   ).toBeVisible();
+  for (const width of [320, 390, 600, 768, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    const cover = page.locator(".saved-playlist .album-art");
+    const box = await cover.boundingBox();
+    assert.ok(
+      Math.abs(box.width - box.height) < 1,
+      `Navidrome playlist thumbnail stays square at ${width}`,
+    );
+    await expect(cover.locator("img")).toBeVisible();
+    if (width === 390)
+      await page.screenshot({
+        path: "../output/test-ui-navidrome-playlists-mobile.png",
+      });
+  }
   await page
     .locator(".saved-playlist")
     .filter({ hasText: remotePlaylistName })
@@ -2322,6 +2350,32 @@ try {
     page.getByRole("link", { name: "下载 远程歌曲", exact: true }),
   ).toHaveAttribute("href", "/api/navidrome/stream/s");
   await page.screenshot({ path: "../output/test-ui-navidrome-playlist.png" });
+  for (const width of [320, 390, 600, 768, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    const cover = page.locator(".playlist-heading > .album-art");
+    const box = await cover.boundingBox();
+    assert.ok(
+      Math.abs(box.width - box.height) < 1,
+      `Navidrome playlist detail cover stays square at ${width}`,
+    );
+    const image = await cover.locator("img").boundingBox();
+    assert.ok(
+      Math.abs(image.width - box.width) < 1 &&
+        Math.abs(image.height - box.height) < 1,
+      `playlist image fills its square cover at ${width}`,
+    );
+    assert.ok(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      `Navidrome playlist detail fits at ${width}`,
+    );
+    if (width === 390)
+      await page.screenshot({
+        path: "../output/test-ui-navidrome-playlist-mobile.png",
+      });
+  }
+  await page.setViewportSize({ width: 1920, height: 1080 });
 
   await expect(
     page.getByRole("button", { name: "删除歌单", exact: true }),
@@ -2468,7 +2522,7 @@ try {
       }),
       "mobile navigation remains horizontally scrollable",
     );
-    const projectLink = page.getByRole("link", {
+    const projectLink = page.locator(".sidebar-bottom").getByRole("link", {
       name: "项目地址（在新标签页打开）",
     });
     await expect(projectLink).toBeVisible();
@@ -2477,6 +2531,7 @@ try {
       "https://github.com/Agonie0v0/melokeep",
     );
     await expect(projectLink).toHaveAttribute("target", "_blank");
+    await expect(page.locator(".project-link")).toHaveCount(1);
     const navButtons = page.locator(".sidebar-capsules .nav-item");
     await expect(navButtons).toHaveCount(8);
     const themeButton = await page
@@ -2519,6 +2574,47 @@ try {
         .locator(".top")
         .getByRole("button", { name: "音源设置", exact: true }),
     ).toHaveCount(0);
+  }
+  for (const width of [320, 390, 600, 801, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    const header = await page.locator(".sidebar").boundingBox();
+    const brand = await page.locator(".sidebar .brand").boundingBox();
+    const tools = page.locator(".sidebar-bottom");
+    const boxes = await Promise.all(
+      [".project-link", ".theme-toggle", ".nav-order-toggle", ".logout"].map(
+        (selector) => tools.locator(selector).boundingBox(),
+      ),
+    );
+    for (const [index, box] of boxes.entries()) {
+      assert.ok(
+        box.x >= header.x &&
+          box.x + box.width <= header.x + header.width &&
+          box.x + box.width <= width &&
+          Math.abs(box.y - boxes[0].y) < 1,
+        `shared header tools stay on one row inside the viewport at ${width}`,
+      );
+      if (index)
+        assert.ok(
+          box.x >= boxes[index - 1].x + boxes[index - 1].width,
+          `header tool order is project, theme, navigation, logout at ${width}`,
+        );
+    }
+    assert.ok(
+      brand.x + brand.width <= boxes[0].x,
+      `brand and header tools do not overlap at ${width}`,
+    );
+    await tools
+      .getByRole("button", { name: "调整导航顺序", exact: true })
+      .click();
+    await expect(page.locator("#navigation-order")).toBeVisible();
+    const menu = await page.locator("#navigation-order").boundingBox();
+    assert.ok(
+      menu.x >= 0 && menu.x + menu.width <= width,
+      `navigation menu stays inside ${width}px viewport: ${JSON.stringify(menu)}`,
+    );
+    await page
+      .getByRole("button", { name: "关闭导航排序", exact: true })
+      .click();
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({

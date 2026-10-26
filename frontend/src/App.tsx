@@ -32,6 +32,7 @@ import {
   History,
   Trash2,
   Github,
+  SlidersHorizontal,
   Eye,
   EyeOff,
   CircleAlert,
@@ -1430,7 +1431,25 @@ export function App() {
             />
           </div>
           <div className="sidebar-bottom">
+            <a
+              className="icon-button project-link"
+              href="https://github.com/Agonie0v0/melokeep"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="项目地址（在新标签页打开）"
+              title="GitHub 项目地址"
+            >
+              <Github aria-hidden="true" />
+            </a>
             <ThemePicker theme={theme} change={setTheme} />
+            <button
+              className="icon-button nav-order-toggle"
+              aria-label="调整导航顺序"
+              title="调整导航顺序"
+              popoverTarget="navigation-order"
+            >
+              <SlidersHorizontal aria-hidden="true" />
+            </button>
             {current && (
               <button
                 className="sidebar-record"
@@ -1477,18 +1496,6 @@ export function App() {
                 <h1>{collectionView ? views.playlists[0] : views[view][0]}</h1>
                 <p>{collectionView ? views.playlists[1] : views[view][1]}</p>
               </div>
-              <div className="top-actions">
-                <a
-                  className="icon-button project-link"
-                  href="https://github.com/Agonie0v0/melokeep"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="项目地址（在新标签页打开）"
-                  title="GitHub 项目地址"
-                >
-                  <Github aria-hidden="true" />
-                </a>
-              </div>
             </header>
           )}
           {collectionView && (
@@ -1534,16 +1541,6 @@ export function App() {
                         <p>{views[view][1]}</p>
                       </div>
                       <div className="top-actions">
-                        <a
-                          className="icon-button project-link"
-                          href="https://github.com/Agonie0v0/melokeep"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label="项目地址（在新标签页打开）"
-                          title="GitHub 项目地址"
-                        >
-                          <Github aria-hidden="true" />
-                        </a>
                         {searching && (
                           <button
                             className="secondary"

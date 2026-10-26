@@ -8,7 +8,6 @@ import {
   Music2,
   Search,
   Settings,
-  SlidersHorizontal,
   ScrollText,
   WandSparkles,
   X,
@@ -115,14 +114,6 @@ export function Navigation({
           );
         })}
       </nav>
-      <button
-        className="icon-button nav-order-toggle"
-        aria-label="调整导航顺序"
-        title="调整导航顺序"
-        popoverTarget="navigation-order"
-      >
-        <SlidersHorizontal />
-      </button>
       <div id="navigation-order" popover="auto" className="navigation-order">
         <div className="navigation-order-heading">
           <strong>导航顺序</strong>
