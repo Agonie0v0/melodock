@@ -1007,6 +1007,22 @@ tr.current {
 .song-copy {
   min-width: 0;
 }
+.song-cover-play,
+.song-title-play {
+  padding: 0;
+}
+.song-title-play {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  border-radius: 3px;
+}
+.song-title-play:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .song-name {
   font-weight: 600;
   font-size: 13.5px;

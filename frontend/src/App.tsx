@@ -1,4 +1,4 @@
-import { Cover, Button, Lyrics, Modal } from "./components";
+import { Cover, Button, Lyrics, Modal, SongTitle } from "./components";
 import { SettingsWorkspace, type SettingsTab } from "./SettingsWorkspace";
 import { Navigation } from "./Navigation";
 import { ThemePicker } from "./ThemePicker";
@@ -728,7 +728,8 @@ export function App() {
   async function refreshPlaylists() {
     setSavedPlaylists(await api<PlaylistSummary[]>("/playlists"));
   }
-  const remotePlaylistId = activePlaylist?.read_only ? activePlaylist.id : null;
+  const remotePlaylistId =
+    activePlaylist?.source === "navidrome" ? activePlaylist.id : null;
   useEffect(() => {
     if (view !== "playlists" || loginRequired || !config) return;
     const abort = new AbortController();
@@ -777,21 +778,44 @@ export function App() {
     };
   }, [view, loginRequired, !!config, playlistRefresh, remotePlaylistId]);
   function openAddToPlaylistModal(items: Track[]) {
-    if (!items.length) {
-      setNotice("请先选择曲目");
-      return;
-    }
     setPlaylistModalTracks(items);
-    setTargetPlaylistId(savedPlaylists[0]?.id || "new");
+    setTargetPlaylistId(items.length ? savedPlaylists[0]?.id || "new" : "new");
     setNewPlaylistName("");
+    if (items.every((track) => track.source === "navidrome"))
+      void api<PlaylistSummary[]>("/navidrome/playlists")
+        .then(setRemotePlaylists)
+        .catch(fail);
   }
   async function submitAddToSavedPlaylist() {
-    if (!playlistModalTracks?.length) return;
+    if (!playlistModalTracks) return;
     setBusy(true);
     try {
       const track_ids = playlistModalTracks.map((t) => t.id);
       let updated: SavedPlaylist;
-      if (targetPlaylistId === "new" || !savedPlaylists.length) {
+      if (
+        targetPlaylistId === "new-navidrome" ||
+        targetPlaylistId.startsWith("navidrome:")
+      ) {
+        if (playlistModalTracks.some((track) => track.source !== "navidrome"))
+          throw new Error(
+            "Navidrome 歌单只能加入已经在 Navidrome 曲库中的歌曲",
+          );
+        const creating = targetPlaylistId === "new-navidrome";
+        updated = await api<SavedPlaylist>(
+          creating
+            ? "/navidrome/playlists"
+            : `/navidrome/playlists/${encodeURIComponent(targetPlaylistId.slice(10))}/tracks`,
+          "POST",
+          {
+            ...(creating ? { name: newPlaylistName.trim() } : {}),
+            song_ids: playlistModalTracks.map((track) => track.source_id),
+          },
+        );
+        setRemotePlaylists(
+          await api<PlaylistSummary[]>("/navidrome/playlists"),
+        );
+        setPlaylistRefresh((value) => value + 1);
+      } else if (targetPlaylistId === "new") {
         const name = newPlaylistName.trim();
         if (!name) {
           setNotice("请输入新歌单名称");
@@ -809,7 +833,11 @@ export function App() {
         );
       }
       await refreshPlaylists();
-      if (activePlaylist?.id === updated.id) setActivePlaylist(updated);
+      if (activePlaylist?.id === updated.id || !playlistModalTracks.length) {
+        setActivePlaylist(updated);
+        resetCollectionFilters();
+        setView("playlists");
+      }
       setPlaylistModalTracks(null);
       setNewPlaylistName("");
       setNotice(updated.detail || `已加入歌单“${updated.name}”`);
@@ -851,16 +879,60 @@ export function App() {
       fail(error);
     }
   }
-  async function removeCollectionTrack(id: string) {
+  async function removeCollectionTrack(track: Track) {
     if (!activePlaylist || activePlaylist.read_only) return;
+    const currentList = activePlaylist;
+    if (currentList.source === "navidrome") {
+      if (track.playlist_index === undefined || !currentList.revision) {
+        setNotice("请先同步歌单，再移除歌曲");
+        return;
+      }
+      setManagementError("");
+      setConfirmation({
+        title: "从 Navidrome 歌单移除歌曲",
+        description: `从“${currentList.name}”移除“${track.title}”？此操作同步到 Navidrome，音乐文件会保留。`,
+        run: async () => {
+          setManaging(true);
+          try {
+            const updated = await api<SavedPlaylist>(
+              `/navidrome/playlists/${encodeURIComponent(currentList.id.slice(10))}/tracks/remove`,
+              "POST",
+              {
+                indexes: [track.playlist_index],
+                revision: currentList.revision,
+              },
+            );
+            setActivePlaylist((current) =>
+              current?.id === updated.id ? updated : current,
+            );
+            setSelected(
+              (previous) =>
+                new Set([...previous].filter((id) => id !== track.id)),
+            );
+            setRemotePlaylists(
+              await api<PlaylistSummary[]>("/navidrome/playlists"),
+            );
+            setConfirmation(null);
+            setNotice("已从 Navidrome 歌单移除，音乐文件保留");
+          } catch (error) {
+            setManagementError((error as Error).message);
+          } finally {
+            setManaging(false);
+          }
+        },
+      });
+      return;
+    }
     try {
       setActivePlaylist(
         await api<SavedPlaylist>(
-          `/playlists/${activePlaylist.id}/tracks/${id}`,
+          `/playlists/${activePlaylist.id}/tracks/${track.id}`,
           "DELETE",
         ),
       );
-      setSelected((previous) => new Set([...previous].filter((s) => s !== id)));
+      setSelected(
+        (previous) => new Set([...previous].filter((s) => s !== track.id)),
+      );
       await refreshPlaylists();
     } catch (error) {
       fail(error);
@@ -1137,11 +1209,13 @@ export function App() {
                 </td>
                 <td>
                   <div className="track">
-                    <Cover track={track} />
+                    <Cover track={track} onPlay={() => void play(track)} />
                     <div className="song-copy">
-                      <div className="song-name" title={track.title}>
-                        {track.title}
-                      </div>
+                      <SongTitle
+                        className="song-name"
+                        track={track}
+                        onPlay={() => void play(track)}
+                      />
                       {!!track.episodes && (
                         <button
                           className="text-button"
@@ -1271,7 +1345,7 @@ export function App() {
                   <td className="track-action">
                     <Button
                       label={`移出歌单 ${track.title}`}
-                      onClick={() => void removeCollectionTrack(track.id)}
+                      onClick={() => void removeCollectionTrack(track)}
                     >
                       <Trash2 />
                       <span>移出歌单</span>
@@ -2187,7 +2261,7 @@ export function App() {
               {managementError && <p role="alert">{managementError}</p>}
               {jobs.map((job) => (
                 <div className="download-row" key={job.id}>
-                  <label className="job-selection">
+                  <div className="job-selection">
                     <input
                       type="checkbox"
                       aria-label={`选择下载任务 ${job.track.title}`}
@@ -2201,10 +2275,18 @@ export function App() {
                         )
                       }
                     />
-                    <Cover track={job.track} />
-                  </label>
+                    <Cover
+                      track={job.track}
+                      onPlay={() => void play(job.track)}
+                    />
+                  </div>
                   <div>
-                    <strong>{job.track.title}</strong>
+                    <strong>
+                      <SongTitle
+                        track={job.track}
+                        onPlay={() => void play(job.track)}
+                      />
+                    </strong>
                     <small>
                       {job.track.artist} · {job.quality_label}
                     </small>
@@ -2344,14 +2426,20 @@ export function App() {
                 void refreshPlaylists().catch(fail);
               }}
               onImport={() => setView("import")}
+              onCreate={() => openAddToPlaylistModal([])}
               changed={(list) => {
                 setActivePlaylist(list);
                 void refreshPlaylists().catch(fail);
+                if (list.source === "navidrome")
+                  setPlaylistRefresh((value) => value + 1);
               }}
               deleted={(id) => {
                 setActivePlaylist(null);
                 setSavedPlaylists((previous) =>
                   previous.filter((l) => l.id !== id),
+                );
+                setRemotePlaylists((previous) =>
+                  previous.filter((list) => list.id !== id),
                 );
                 setSelected(new Set());
               }}
@@ -2460,7 +2548,26 @@ export function App() {
                 })()
               }
               queue={(items) => void addToPlaylist(items)}
+              savePlaylist={openAddToPlaylistModal}
               remove={confirmFileDeletion}
+              remoteDeleted={(ids) => {
+                setPlaylist((previous) =>
+                  previous.filter((track) => !ids.includes(track.id)),
+                );
+                setFavorites((previous) =>
+                  previous.filter((track) => !ids.includes(track.id)),
+                );
+                if (current && ids.includes(current.id)) {
+                  ++playGeneration.current;
+                  audio.current?.pause();
+                  audio.current?.removeAttribute("src");
+                  audio.current?.load();
+                  setCurrent(null);
+                  setLoadingPlay(false);
+                }
+                setPlaylistRefresh((value) => value + 1);
+                void api<LibraryFile[]>("/files").then(setFiles).catch(fail);
+              }}
               changed={(file) => {
                 setFiles((previous) =>
                   previous.map((item) =>
@@ -2592,35 +2699,37 @@ export function App() {
       )}
       {playlistModalTracks && (
         <Modal
-          title="加入歌单"
+          title={playlistModalTracks.length ? "加入歌单" : "新建歌单"}
           close={busy ? undefined : () => setPlaylistModalTracks(null)}
         >
           <p>
-            将已选的 <b>{playlistModalTracks.length}</b>{" "}
-            首曲目保存至“我的歌单”。
+            {playlistModalTracks.length
+              ? `将已选的 ${playlistModalTracks.length} 首曲目保存到歌单。`
+              : "选择歌单保存位置，并填写名称。"}
           </p>
           <div className="playlist-picker-list">
-            {savedPlaylists.map((list) => (
-              <label className="version-option" key={list.id}>
-                <input
-                  type="radio"
-                  name="target-playlist"
-                  value={list.id}
-                  checked={targetPlaylistId === list.id}
-                  onChange={() => setTargetPlaylistId(list.id)}
-                />
-                <span>
-                  {list.name}
-                  <small>{list.track_count} 首曲目</small>
-                </span>
-              </label>
-            ))}
+            {!!playlistModalTracks.length &&
+              savedPlaylists.map((list) => (
+                <label className="version-option" key={list.id}>
+                  <input
+                    type="radio"
+                    name="target-playlist"
+                    value={list.id}
+                    checked={targetPlaylistId === list.id}
+                    onChange={() => setTargetPlaylistId(list.id)}
+                  />
+                  <span>
+                    {list.name}
+                    <small>{list.track_count} 首曲目</small>
+                  </span>
+                </label>
+              ))}
             <label className="version-option">
               <input
                 type="radio"
                 name="target-playlist"
                 value="new"
-                checked={targetPlaylistId === "new" || !savedPlaylists.length}
+                checked={targetPlaylistId === "new"}
                 onChange={() => setTargetPlaylistId("new")}
               />
               <span>
@@ -2628,8 +2737,46 @@ export function App() {
                 <small>创建一个新的自定义歌单并加入曲目</small>
               </span>
             </label>
+            {playlistModalTracks.every(
+              (track) => track.source === "navidrome",
+            ) && (
+              <>
+                {!!playlistModalTracks.length &&
+                  remotePlaylists
+                    .filter((list) => !list.read_only)
+                    .map((list) => (
+                      <label className="version-option" key={list.id}>
+                        <input
+                          type="radio"
+                          name="target-playlist"
+                          value={list.id}
+                          checked={targetPlaylistId === list.id}
+                          onChange={() => setTargetPlaylistId(list.id)}
+                        />
+                        <span>
+                          {list.name}
+                          <small>Navidrome · {list.track_count} 首曲目</small>
+                        </span>
+                      </label>
+                    ))}
+                <label className="version-option">
+                  <input
+                    type="radio"
+                    name="target-playlist"
+                    value="new-navidrome"
+                    checked={targetPlaylistId === "new-navidrome"}
+                    onChange={() => setTargetPlaylistId("new-navidrome")}
+                  />
+                  <span>
+                    新建 Navidrome 歌单
+                    <small>保存到已连接的 Navidrome 服务器</small>
+                  </span>
+                </label>
+              </>
+            )}
           </div>
-          {(targetPlaylistId === "new" || !savedPlaylists.length) && (
+          {(targetPlaylistId === "new" ||
+            targetPlaylistId === "new-navidrome") && (
             <label className="playlist-new-field">
               <span>新歌单名称</span>
               <input
@@ -2655,12 +2802,17 @@ export function App() {
               className="primary"
               disabled={
                 busy ||
-                ((targetPlaylistId === "new" || !savedPlaylists.length) &&
+                ((targetPlaylistId === "new" ||
+                  targetPlaylistId === "new-navidrome") &&
                   !newPlaylistName.trim())
               }
               onClick={() => void submitAddToSavedPlaylist()}
             >
-              {busy ? "正在保存…" : "确定加入"}
+              {busy
+                ? "正在保存…"
+                : playlistModalTracks.length
+                  ? "确定加入"
+                  : "创建歌单"}
             </button>
           </div>
         </Modal>

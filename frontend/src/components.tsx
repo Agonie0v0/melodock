@@ -5,12 +5,21 @@ import type { Track } from "./types";
 export function Cover({
   track,
   large = false,
+  onPlay,
 }: {
-  track?: Pick<Track, "cover"> | null;
+  track?: (Pick<Track, "cover"> & Partial<Pick<Track, "title">>) | null;
   large?: boolean;
+  onPlay?: () => void;
 }) {
+  const Element = onPlay ? "button" : "span";
   return (
-    <span className={large ? "album-art" : "cover"}>
+    <Element
+      className={`${large ? "album-art" : "cover"}${onPlay ? " song-cover-play" : ""}`}
+      type={onPlay ? "button" : undefined}
+      aria-label={onPlay ? `播放封面 ${track?.title || "歌曲"}` : undefined}
+      title={onPlay ? `播放 ${track?.title || "歌曲"}` : undefined}
+      onClick={onPlay}
+    >
       <span className="record-fallback" aria-hidden="true">
         <span>
           <Music2 />
@@ -26,7 +35,28 @@ export function Cover({
           onError={(e) => (e.currentTarget.style.display = "none")}
         />
       )}
-    </span>
+    </Element>
+  );
+}
+export function SongTitle({
+  track,
+  onPlay,
+  className = "",
+}: {
+  track: Pick<Track, "title">;
+  onPlay: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`song-title-play ${className}`}
+      aria-label={`播放歌名 ${track.title}`}
+      title={`播放 ${track.title}`}
+      onClick={onPlay}
+    >
+      {track.title}
+    </button>
   );
 }
 export function Button({

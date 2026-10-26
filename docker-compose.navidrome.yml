@@ -8,6 +8,8 @@ services:
     ports:
       - "8765:8765"
     volumes:
+      # 可选曲库删除：此挂载可写，对应 Navidrome 的 /music 为 /music/library。
+      # 不启用删除时无需额外配置，Navidrome 自己仍可保持只读挂载。
       - ./music:/music
       - ./data:/data
     environment:

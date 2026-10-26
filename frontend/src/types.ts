@@ -8,6 +8,7 @@ export interface Quality {
   evidence: string;
 }
 export interface Track {
+  playlist_index?: number;
   id: string;
   source: string;
   source_id: string;
@@ -79,6 +80,9 @@ export interface NavidromeConfig {
   url: string;
   username: string;
   auto_scan: boolean;
+  delete_enabled?: boolean;
+  music_root?: string;
+  server_music_root?: string;
   has_password: boolean;
   has_api_key: boolean;
 }
@@ -175,6 +179,9 @@ export interface PlaylistIssue {
 }
 export interface SavedPlaylist {
   read_only?: boolean;
+  can_manage?: boolean;
+  revision?: string;
+  owner?: string;
   id: string;
   name: string;
   source: string;

@@ -344,6 +344,28 @@ try {
   let remoteSyncFails = false;
   let remotePlaylistName = "Navidrome 测试歌单";
   let songOffsets = [];
+  let remoteWritable = false;
+  let navDeleteEnabled = false;
+  let navDeletes = 0;
+  const remoteWrites = [];
+  const remoteRevision = "a".repeat(64);
+  const remoteDetail = () => ({
+    id: "navidrome:p1",
+    name: remotePlaylistName,
+    source: "navidrome",
+    read_only: !remoteWritable,
+    can_manage: remoteWritable,
+    revision: remoteRevision,
+    source_url: "",
+    created_at: 1792700000,
+    tracks: remotePlaylistTracks.map((track, playlist_index) => ({
+      ...track,
+      playlist_index,
+    })),
+    issues: [],
+    detail: "自动同步",
+    task_id: "",
+  });
   await page.route("**/api/**", async (route) => {
     const request = route.request(),
       p = new URL(request.url()).pathname.replace("/api", ""),
@@ -351,7 +373,32 @@ try {
     let result;
     if (p === "/auth/status") result = { authenticated: true, required: false };
     else if (p === "/auth/logout") result = { success: true };
-    else if (p === "/navidrome/playlists") {
+    else if (p === "/navidrome/capabilities")
+      result = { delete_songs: navDeleteEnabled };
+    else if (p === "/navidrome/songs/s/deletion")
+      result = {
+        path: "/music/library/远程歌手/远程歌曲.wav",
+        revision: remoteRevision,
+      };
+    else if (p === "/navidrome/songs/s" && method === "DELETE") {
+      assert.equal(
+        new URL(request.url()).searchParams.get("revision"),
+        remoteRevision,
+      );
+      navDeletes++;
+      result = {
+        deleted: true,
+        track_ids: [remoteTrack.id],
+        warning: "音乐文件已删除，但扫描未启动，请手动扫描",
+      };
+    } else if (p === "/navidrome/playlists" && method === "POST") {
+      const body = request.postDataJSON();
+      remoteWrites.push({ method, body });
+      remotePlaylistName = body.name;
+      remotePlaylistTracks = body.song_ids.map(() => remoteTrack);
+      remoteSyncEnabled = true;
+      result = remoteDetail();
+    } else if (p === "/navidrome/playlists") {
       if (remoteSyncFails) {
         await route.fulfill({
           status: 502,
@@ -365,7 +412,8 @@ try {
               id: "navidrome:p1",
               name: remotePlaylistName,
               source: "navidrome",
-              read_only: true,
+              read_only: !remoteWritable,
+              can_manage: remoteWritable,
               source_url: "",
               created_at: 1792700000,
               track_count: remotePlaylistTracks.length,
@@ -376,19 +424,19 @@ try {
             },
           ]
         : [];
-    } else if (p === "/navidrome/playlists/p1") {
-      result = {
-        id: "navidrome:p1",
-        name: remotePlaylistName,
-        source: "navidrome",
-        read_only: true,
-        source_url: "",
-        created_at: 1792700000,
-        tracks: remotePlaylistTracks,
-        issues: [],
-        detail: "自动同步",
-        task_id: "",
-      };
+    } else if (p.startsWith("/navidrome/playlists/p1")) {
+      const body =
+        method === "POST" || method === "PATCH" ? request.postDataJSON() : {};
+      if (method !== "GET") remoteWrites.push({ method, path: p, body });
+      if (method === "DELETE") remoteSyncEnabled = false;
+      if (method === "PATCH") remotePlaylistName = body.name;
+      if (p.endsWith("/tracks/remove")) {
+        assert.equal(body.revision, remoteRevision);
+        for (const index of [...body.indexes].sort((a, b) => b - a))
+          remotePlaylistTracks.splice(index, 1);
+      } else if (p.endsWith("/tracks"))
+        remotePlaylistTracks.push(...body.song_ids.map(() => remoteTrack));
+      result = remoteDetail();
     } else if (p === "/navidrome/songs") {
       const offset = Number(new URL(request.url()).searchParams.get("offset"));
       songOffsets.push(offset);
@@ -1064,6 +1112,24 @@ try {
     await expect(page.getByLabel(label, { exact: true })).toBeVisible();
   await expect(page.getByText("30.0 MB", { exact: true })).toBeVisible();
   await page
+    .getByRole("button", { name: "播放封面 测试曲目", exact: true })
+    .click();
+  await expect
+    .poll(() => page.locator("audio").evaluate((audio) => !audio.paused))
+    .toBe(true);
+  await expect(
+    page.getByRole("checkbox", { name: "选择 测试曲目", exact: true }),
+  ).not.toBeChecked();
+  await page.locator("audio").evaluate((audio) => audio.pause());
+  await page
+    .getByRole("button", { name: "播放歌名 测试曲目", exact: true })
+    .focus();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.locator("audio").evaluate((audio) => !audio.paused))
+    .toBe(true);
+
+  await page
     .getByRole("button", { name: "播放 测试曲目", exact: true })
     .click();
   await page.waitForFunction(
@@ -1269,6 +1335,16 @@ try {
   assert.equal(jobs[0].status, "paused");
   await page.getByRole("button", { name: "继续下载", exact: true }).click();
   assert.equal(jobs[0].status, "downloading");
+  await page.getByLabel("播放封面 测试曲目", { exact: true }).click();
+  await expect(
+    page.getByLabel("选择下载任务 测试曲目", { exact: true }),
+  ).not.toBeChecked();
+  await page.locator("audio").evaluate((audio) => audio.pause());
+  await page.getByLabel("播放歌名 测试曲目", { exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.locator("audio").evaluate((audio) => !audio.paused))
+    .toBe(true);
   await page.getByLabel("全选下载任务").check();
   await page.getByRole("button", { name: "暂停选中", exact: true }).click();
   await expect(
@@ -1637,6 +1713,51 @@ try {
   await expect(page.locator(".navidrome-library .music-table")).toContainText(
     "远程歌曲",
   );
+  await expect(
+    page.getByLabel("删除原文件 远程歌曲", { exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "播放封面 远程歌曲", exact: true })
+    .click();
+  await expect
+    .poll(() => page.locator("audio").evaluate((audio) => !audio.paused))
+    .toBe(true);
+  navDeleteEnabled = true;
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await page.getByLabel("删除原文件 远程歌曲", { exact: true }).click();
+  const deletionDialog = page.getByRole("dialog", {
+    name: "删除 Navidrome 原文件",
+    exact: true,
+  });
+  await expect(deletionDialog).toContainText(
+    "/music/library/远程歌手/远程歌曲.wav",
+  );
+  assert.equal(navDeletes, 0);
+  await deletionDialog
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
+  assert.equal(navDeletes, 0);
+  await page.getByLabel("删除原文件 远程歌曲", { exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await deletionDialog.screenshot({
+    path: "../output/test-ui-navidrome-delete-confirm-mobile.png",
+  });
+  await deletionDialog
+    .getByRole("button", { name: "确认永久删除", exact: true })
+    .click();
+  await expect(deletionDialog).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "音乐文件已删除，但扫描未启动" }),
+  ).toBeVisible();
+  await expect.poll(() => navDeletes).toBe(1);
+  await expect
+    .poll(() => page.locator("audio").evaluate((audio) => audio.paused))
+    .toBe(true);
+  navDeleteEnabled = false;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
   await page.getByRole("button", { name: "下一页", exact: true }).click();
   await expect(page.getByText("第 2 页", { exact: true })).toBeVisible();
   assert.ok(songOffsets.includes(50));
@@ -1993,6 +2114,28 @@ try {
   await expect(
     page.getByRole("button", { name: "保存曲库设置", exact: true }),
   ).toHaveCount(0);
+  const optionalDelete = page.getByRole("checkbox", {
+    name: "允许删除 Navidrome 曲库原文件（可选）",
+    exact: true,
+  });
+  await expect(optionalDelete).not.toBeChecked();
+  await expect(
+    page.getByPlaceholder("/music/library", { exact: true }),
+  ).toHaveCount(0);
+  await optionalDelete.check();
+  await page
+    .getByPlaceholder("/music/library", { exact: true })
+    .fill("/music/library");
+  await page.getByPlaceholder("/music", { exact: true }).fill("/music");
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.locator(".library-settings").screenshot({
+    path: "../output/test-ui-navidrome-delete-settings-mobile.png",
+  });
+  await optionalDelete.uncheck();
   await page.getByText("启用 Navidrome", { exact: true }).click();
   await page.getByLabel(/^服务地址/).fill("http://navidrome:4533");
   await page
@@ -2481,6 +2624,71 @@ try {
   remoteSyncFails = false;
   await page.getByRole("button", { name: "同步歌单", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
+
+  remoteWritable = true;
+  remotePlaylistTracks = [remoteTrack, remoteTrack];
+  await page.getByRole("button", { name: "同步歌单", exact: true }).click();
+  await page
+    .locator(".saved-playlist")
+    .filter({ hasText: remotePlaylistName })
+    .click();
+  await expect(page.locator(".track-table tbody tr")).toHaveCount(2);
+  await page
+    .getByRole("button", { name: "移出歌单 远程歌曲", exact: true })
+    .nth(1)
+    .click();
+  const removeDialog = page.getByRole("dialog", {
+    name: "从 Navidrome 歌单移除歌曲",
+    exact: true,
+  });
+  await expect(removeDialog).toContainText("音乐文件会保留");
+  await removeDialog
+    .getByRole("button", { name: "确认操作", exact: true })
+    .click();
+  await expect(page.locator(".track-table tbody tr")).toHaveCount(1);
+  assert.deepEqual(remoteWrites.at(-1).body.indexes, [1]);
+  await page.getByRole("button", { name: "重命名", exact: true }).click();
+  const renameDialog = page.getByRole("dialog");
+  await renameDialog.locator("input").fill("管理后的远程歌单");
+  await renameDialog.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator(".playlist-heading h2")).toHaveText(
+    "管理后的远程歌单",
+  );
+  await page.getByRole("button", { name: "删除歌单", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("音乐文件");
+  await page.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(page.locator(".saved-playlist")).toHaveCount(0);
+  await page.getByRole("button", { name: "新建歌单", exact: true }).click();
+  const createDialog = page.getByRole("dialog", {
+    name: "新建歌单",
+    exact: true,
+  });
+  await createDialog
+    .getByRole("radio", { name: "新建 Navidrome 歌单", exact: false })
+    .check();
+  await createDialog
+    .getByLabel("新歌单名称", { exact: true })
+    .fill("新建远程歌单");
+  await createDialog
+    .getByRole("button", { name: "创建歌单", exact: true })
+    .click();
+  await expect(page.locator(".playlist-heading h2")).toHaveText("新建远程歌单");
+  assert.deepEqual(remoteWrites.at(-1).body.song_ids, []);
+  await page.getByRole("button", { name: "音乐库", exact: true }).click();
+  await page.getByRole("tab", { name: "Navidrome", exact: true }).click();
+  await page.getByRole("button", { name: "全部歌曲", exact: true }).click();
+  await page.getByLabel("加入歌单 远程歌曲", { exact: true }).click();
+  const addDialog = page.getByRole("dialog", { name: "加入歌单", exact: true });
+  await addDialog
+    .getByRole("radio", { name: "新建远程歌单", exact: false })
+    .check();
+  await addDialog
+    .getByRole("button", { name: "确定加入", exact: true })
+    .click();
+  await expect(addDialog).toHaveCount(0);
+  assert.deepEqual(remoteWrites.at(-1).body.song_ids, ["s"]);
+  await page.getByRole("button", { name: "歌单", exact: true }).click();
+  await expect(page.locator(".track-table tbody tr")).toHaveCount(1);
   await openSettings("通知与机器人");
   await expect(
     page.locator('.channel-status[data-enabled="false"]'),

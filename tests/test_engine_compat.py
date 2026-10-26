@@ -1386,3 +1386,65 @@ def test_project_proxy_source_scope_and_address_changes():
         manager.build()
         overrides = manager.client.requests_overrides['MiguMusicClient']
         assert overrides.get('proxies') == ({'http': address, 'https': address} if expected else None)
+
+
+def test_navidrome_optional_file_delete_confirm_cleanup_and_scan_failure(monkeypatch):
+    import sqlite3
+    from fastapi import HTTPException
+    client = TestClient(app.app)
+    library = app.app.state.engine_test['library']
+    root = app.original.FILE_ROOT / 'nav-delete-shared'
+    root.mkdir(parents=True, exist_ok=True)
+    audio = root / 'song.wav'
+    with wave.open(str(audio), 'wb') as output:
+        output.setparams((1, 2, 8000, 0, 'NONE', 'not compressed'))
+        output.writeframes(b'\0\0' * 8000)
+    lyrics = audio.with_suffix('.lrc')
+    lyrics.write_text('keep lyrics', encoding='utf-8')
+    cover = root / 'cover.jpg'
+    cover.write_bytes(b'keep cover')
+    cfg = {'enabled': True, 'delete_enabled': False, 'music_root': str(root), 'server_music_root': '/nav/music'}
+    monkeypatch.setattr(library, 'nav_settings', lambda: cfg)
+    song = {'id': 'delete-remote', 'path': '/nav/music/song.wav', 'size': audio.stat().st_size}
+    calls = []
+    def request(endpoint, **params):
+        calls.append(endpoint)
+        if endpoint == 'getSong':
+            return {'song': song}
+        if endpoint == 'startScan':
+            raise HTTPException(403, 'scan denied')
+        raise AssertionError(endpoint)
+    monkeypatch.setattr(library.navidrome, 'request', request)
+    preview_url = '/api/navidrome/songs/delete-remote/deletion'
+    delete_url = '/api/navidrome/songs/delete-remote'
+    assert client.get('/api/navidrome/capabilities').json() == {'delete_songs': False}
+    assert client.get(preview_url).status_code == 409
+    assert client.delete(delete_url, params={'revision': 'x'}, headers=HEADERS).status_code == 409
+    assert calls == [] and audio.exists()
+    cfg['delete_enabled'] = True
+    assert client.get('/api/navidrome/capabilities').json() == {'delete_songs': True}
+    preview = client.get(preview_url).json()
+    assert preview['path'] == str(audio)
+    assert client.delete(delete_url, params={'revision': 'stale'}, headers=HEADERS).status_code == 409
+    local_file = next(f for f in client.get('/api/files').json() if f['name'] == audio.name and 'nav-delete-shared' in f['folder'])
+    ids = [local_file['track']['id'], 'navidrome-delete-remote']
+    with sqlite3.connect(_root / 'data/melokeep.db') as db:
+        for ident in ids:
+            track = {'id': ident, 'title': 'delete fixture'}
+            db.execute('INSERT OR REPLACE INTO records(kind,id,body) VALUES (?,?,?)', ('track', ident, json.dumps({'track': track})))
+            db.execute('INSERT OR REPLACE INTO records(kind,id,body) VALUES (?,?,?)', ('favorite', ident, json.dumps(track)))
+        db.execute('INSERT OR REPLACE INTO records(kind,id,body) VALUES (?,?,?)', ('playlist', 'main', json.dumps([{'id': ident} for ident in ids])))
+        db.execute('INSERT OR REPLACE INTO records(kind,id,body) VALUES (?,?,?)', ('collection', 'delete-test', json.dumps({'id': 'delete-test', 'tracks': [{'id': ident} for ident in ids]})))
+    response = client.delete(delete_url, params={'revision': preview['revision']}, headers=HEADERS)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['deleted'] and set(ids) <= set(result['track_ids'])
+    assert '已删除' in result['warning'] and '扫描' in result['warning']
+    assert not audio.exists() and lyrics.exists() and cover.exists()
+    with sqlite3.connect(_root / 'data/melokeep.db') as db:
+        assert not db.execute("SELECT 1 FROM records WHERE kind IN ('favorite','track') AND id IN (?,?)", ids).fetchall()
+        assert json.loads(db.execute("SELECT body FROM records WHERE kind='collection' AND id='delete-test'").fetchone()[0])['tracks'] == []
+        assert json.loads(db.execute("SELECT body FROM records WHERE kind='playlist' AND id='main'").fetchone()[0]) == []
+        db.execute("DELETE FROM records WHERE kind='collection' AND id='delete-test'")
+    lyrics.unlink()
+    cover.unlink()

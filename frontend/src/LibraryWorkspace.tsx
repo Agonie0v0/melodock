@@ -36,12 +36,14 @@ export function LibraryWorkspace({
   mode,
   tab,
   setTab,
+  remoteDeleted,
   ...props
 }: LibraryProps & {
   openSettings: (tab: "library" | "navidrome") => void;
   mode: "library" | "processing";
   tab: string;
   setTab: (tab: string) => void;
+  remoteDeleted?: (ids: string[]) => void;
 }) {
   const [focus, setFocus] = useState("");
   const [busy, setBusy] = useState(false);
@@ -199,6 +201,8 @@ export function LibraryWorkspace({
           <NavidromeLibrary
             play={props.play}
             queue={props.queue}
+            savePlaylist={props.savePlaylist}
+            deleted={remoteDeleted}
             openSettings={() => openSettings("navidrome")}
           />
         )}

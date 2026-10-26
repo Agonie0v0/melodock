@@ -27,7 +27,7 @@ def test_remote_playlists_and_paged_songs_are_playable_without_exposing_credenti
     nav.install(app, remembered.append)
     with TestClient(app) as client:
         summary = client.get('/api/navidrome/playlists').json()[0]
-        assert summary['id'] == 'navidrome:p:1' and summary['read_only'] is True
+        assert summary['id'] == 'navidrome:p:1' and summary['read_only'] is False
         detail = client.get('/api/navidrome/playlists/p:1').json()
         assert len(detail['tracks']) == 2  # Preserve intentional duplicates and server order.
         assert detail['tracks'][0]['playback']['url'] == '/api/navidrome/stream/s%2F1'
@@ -94,3 +94,75 @@ def test_lyrics_plain_missing_and_unsupported_servers_fall_back_without_fake_tim
         raise HTTPException(502, 'offline')
     nav.request = unavailable
     assert nav.lyrics('offline') == ''
+
+
+def test_playlist_writes_preserve_duplicate_positions_and_reject_stale_or_foreign_edits():
+    nav = Navidrome(lambda: {'enabled': True, 'username': 'alice'})
+    item = {'id': 'p1', 'name': '初始', 'owner': 'Alice', 'changed': 'v1',
+            'entry': [{'id': 's1'}, {'id': 's2'}, {'id': 's1'}]}
+    writes = []
+    def request(endpoint, **params):
+        if endpoint == 'getPlaylist':
+            return {'playlist': item}
+        writes.append((endpoint, params))
+        assert params.pop('method') == 'POST'
+        if endpoint == 'createPlaylist':
+            item.update(name=params['name'], entry=[{'id': sid} for sid in params['songId']])
+            return {'playlist': item}
+        if endpoint == 'updatePlaylist':
+            if 'name' in params:
+                item['name'] = params['name']
+            for index in params.get('songIndexToRemove', []):
+                item['entry'].pop(index)
+            item['entry'].extend({'id': sid} for sid in params.get('songIdToAdd', []))
+        return {}
+    nav.request = request
+    app = FastAPI()
+    nav.install(app, lambda track: None)
+    with TestClient(app) as client:
+        base = '/api/navidrome/playlists/p1'
+        current = client.get(base).json()
+        assert [t['playlist_index'] for t in current['tracks']] == [0, 1, 2]
+        response = client.post(base + '/tracks/remove', json={'indexes': [2], 'revision': current['revision']})
+        assert [t['source_id'] for t in response.json()['tracks']] == ['s1', 's2']
+        assert client.post(base + '/tracks/remove', json={'indexes': [0], 'revision': current['revision']}).status_code == 409
+        assert client.post(base + '/tracks/remove', json={'indexes': [False], 'revision': current['revision']}).status_code == 422
+        current = client.get(base).json()
+        assert client.post(base + '/tracks/remove', json={'indexes': [9], 'revision': current['revision']}).status_code == 400
+        assert client.patch(base, json={'name': ' 新名 '}).json()['name'] == '新名'
+        assert client.patch(base, json={'name': '   '}).status_code == 422
+        assert client.post(base + '/tracks', json={'song_ids': ['s2', 's3']}).status_code == 200
+        assert [t['source_id'] for t in client.get(base).json()['tracks']] == ['s1', 's2', 's2', 's3']
+        item['readonly'] = True
+        count = len(writes)
+        assert client.post(base + '/tracks', json={'song_ids': ['x']}).status_code == 403
+        item['owner'] = 'other'
+        assert client.patch(base, json={'name': 'x'}).status_code == 403
+        assert client.delete(base).status_code == 403
+        assert len(writes) == count
+        item.update(owner='alice', readonly=False)
+        assert client.delete(base).status_code == 200
+        created = client.post('/api/navidrome/playlists', json={'name': '空歌单', 'song_ids': []})
+        assert created.status_code == 200 and created.json()['tracks'] == []
+
+
+def test_playlist_post_uses_repeated_form_fields_and_maps_permission_errors(monkeypatch):
+    import requests
+    from urllib.parse import parse_qs
+    cfg = {'enabled': True, 'url': 'https://nav.example', 'username': 'alice', 'password': 'secret'}
+    nav = Navidrome(lambda: cfg)
+    calls = []
+    def post(url, **options):
+        prepared = requests.Request('POST', url, data=options['data']).prepare()
+        calls.append(parse_qs(prepared.body))
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b'{"subsonic-response":{"status":"failed","error":{"code":50}}}'
+        return response
+    monkeypatch.setattr(requests, 'post', post)
+    import pytest
+    with pytest.raises(HTTPException) as error:
+        nav.request('updatePlaylist', method='POST', playlistId='p', songIdToAdd=['a', 'b', 'a'])
+    assert error.value.status_code == 403
+    assert calls[0]['songIdToAdd'] == ['a', 'b', 'a']
+    assert calls[0]['c'] == ['melokeep'] and 'secret' not in str(calls)

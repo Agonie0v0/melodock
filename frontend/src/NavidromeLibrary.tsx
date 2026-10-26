@@ -10,9 +10,11 @@ import {
   Music2,
   LayoutGrid,
   List,
+  ListMusic,
+  Trash2,
 } from "lucide-react";
 import { api } from "./api";
-import { Cover, Button } from "./components";
+import { Cover, Button, Modal, SongTitle } from "./components";
 import { clock } from "./lyrics";
 import type { Track } from "./types";
 
@@ -45,10 +47,14 @@ function preference(key: string, values: string[], fallback: string) {
 export function NavidromeLibrary({
   play,
   queue,
+  savePlaylist,
+  deleted,
   openSettings,
 }: {
   play: (track: Track) => void;
   queue: (tracks: Track[]) => void;
+  savePlaylist?: (tracks: Track[]) => void;
+  deleted?: (ids: string[]) => void;
   openSettings: () => void;
 }) {
   const [mode, setMode] = useState(() =>
@@ -87,6 +93,79 @@ export function NavidromeLibrary({
     count?: number;
   } | null>(null);
   const [scanBusy, setScanBusy] = useState(false);
+  const [canDelete, setCanDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteNotice, setDeleteNotice] = useState("");
+  const [deletePreview, setDeletePreview] = useState<{
+    track: Track;
+    path: string;
+    revision: string;
+  } | null>(null);
+  useEffect(() => {
+    const abort = new AbortController();
+    void api<{ delete_songs: boolean }>(
+      "/navidrome/capabilities",
+      "GET",
+      undefined,
+      abort.signal,
+    )
+      .then((value) => setCanDelete(value.delete_songs === true))
+      .catch(() => setCanDelete(false));
+    return () => abort.abort();
+  }, [refresh]);
+  async function previewDeletion(track: Track) {
+    setDeleting(true);
+    setDeleteError("");
+    setDeleteNotice("");
+    try {
+      const value = await api<{ path: string; revision: string }>(
+        `/navidrome/songs/${encodeURIComponent(track.source_id)}/deletion`,
+      );
+      setDeletePreview({ ...value, track });
+    } catch (e) {
+      setDeleteError((e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  }
+  async function deleteSong() {
+    if (!deletePreview) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const result = await api<{
+        track_ids: string[];
+        warning?: string;
+        scan?: { scanning?: boolean; count?: number };
+      }>(
+        `/navidrome/songs/${encodeURIComponent(deletePreview.track.source_id)}?revision=${encodeURIComponent(deletePreview.revision)}`,
+        "DELETE",
+      );
+      const id = deletePreview.track.id;
+      setTracks((items) => items.filter((track) => track.id !== id));
+      setAlbum((value) =>
+        value
+          ? {
+              ...value,
+              tracks: value.tracks.filter((track) => track.id !== id),
+            }
+          : value,
+      );
+      deleted?.(result.track_ids);
+      setDeletePreview(null);
+      setDeleteNotice(
+        result.warning ||
+          "音乐文件已删除，Navidrome 将在扫描后更新曲库和歌单。",
+      );
+      if (result.scan) setScan(result.scan);
+    } catch (e) {
+      setDeletePreview(null);
+      setDeleteError((e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  }
   const albumRequest = useRef<AbortController | null>(null);
   useEffect(() => {
     albumRequest.current?.abort();
@@ -213,6 +292,47 @@ export function NavidromeLibrary({
   const pageSize = query || mode === "songs" ? 50 : 48;
   return (
     <section className="view navidrome-library">
+      {deletePreview && (
+        <Modal
+          title="删除 Navidrome 原文件"
+          close={deleting ? undefined : () => setDeletePreview(null)}
+        >
+          <p>
+            将永久删除“{deletePreview.track.title}
+            ”的音频文件，无法撤销。Navidrome
+            及其他客户端也将失去此歌曲。歌词、封面和其他文件保留。
+          </p>
+          <p className="setting-help" style={{ overflowWrap: "anywhere" }}>
+            {deletePreview.path}
+          </p>
+          <div className="management-toolbar">
+            <button
+              className="secondary"
+              disabled={deleting}
+              onClick={() => setDeletePreview(null)}
+            >
+              取消
+            </button>
+            <button
+              className="primary"
+              disabled={deleting}
+              onClick={() => void deleteSong()}
+            >
+              {deleting ? "正在删除…" : "确认永久删除"}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {deleteError && (
+        <p role="alert" className="library-error">
+          {deleteError}
+        </p>
+      )}
+      {deleteNotice && (
+        <p role="status" className="setting-help">
+          {deleteNotice}
+        </p>
+      )}
       <div className="library-heading">
         <div>
           <h2>Navidrome 音乐库</h2>
@@ -410,8 +530,10 @@ export function NavidromeLibrary({
             <div className="nav-song-cards">
               {shownTracks.map((track) => (
                 <article className="nav-song-card" key={track.id}>
-                  <Cover track={track} large />
-                  <strong>{track.title}</strong>
+                  <Cover track={track} large onPlay={() => play(track)} />
+                  <strong>
+                    <SongTitle track={track} onPlay={() => play(track)} />
+                  </strong>
                   <span>{track.artist || "未知歌手"}</span>
                   <small>
                     {track.album || "未知专辑"} · {clock(track.duration)}
@@ -429,6 +551,23 @@ export function NavidromeLibrary({
                     >
                       <Plus />
                     </Button>
+                    {savePlaylist && (
+                      <Button
+                        label={`加入歌单 ${track.title}`}
+                        onClick={() => savePlaylist([track])}
+                      >
+                        <ListMusic />
+                      </Button>
+                    )}
+                    {canDelete && (
+                      <Button
+                        label={`删除原文件 ${track.title}`}
+                        disabled={deleting}
+                        onClick={() => void previewDeletion(track)}
+                      >
+                        <Trash2 />
+                      </Button>
+                    )}
                   </div>
                 </article>
               ))}
@@ -451,9 +590,14 @@ export function NavidromeLibrary({
                     <tr key={track.id}>
                       <td>
                         <div className="library-song">
-                          <Cover track={track} />
+                          <Cover track={track} onPlay={() => play(track)} />
                           <span>
-                            <strong>{track.title}</strong>
+                            <strong>
+                              <SongTitle
+                                track={track}
+                                onPlay={() => play(track)}
+                              />
+                            </strong>
                             <small>{track.artist}</small>
                           </span>
                         </div>
@@ -475,6 +619,23 @@ export function NavidromeLibrary({
                           >
                             <Plus />
                           </Button>
+                          {savePlaylist && (
+                            <Button
+                              label={`加入歌单 ${track.title}`}
+                              onClick={() => savePlaylist([track])}
+                            >
+                              <ListMusic />
+                            </Button>
+                          )}
+                          {canDelete && (
+                            <Button
+                              label={`删除原文件 ${track.title}`}
+                              disabled={deleting}
+                              onClick={() => void previewDeletion(track)}
+                            >
+                              <Trash2 />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

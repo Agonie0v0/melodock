@@ -8,8 +8,9 @@ import {
   Download,
   Music2,
   WandSparkles,
+  ListMusic,
 } from "lucide-react";
-import { Button, Cover, Modal } from "./components";
+import { Button, Cover, Modal, SongTitle } from "./components";
 import { api } from "./api";
 import { clock } from "./lyrics";
 import type { LibraryFile, Track } from "./types";
@@ -27,6 +28,7 @@ export function MusicLibrary({
   play,
   playAll,
   queue,
+  savePlaylist,
   remove,
   changed,
   manage,
@@ -43,6 +45,7 @@ export function MusicLibrary({
   play: (track: Track) => void;
   playAll: (tracks: Track[]) => void;
   queue: (tracks: Track[]) => void;
+  savePlaylist?: (tracks: Track[]) => void;
   remove: (files: LibraryFile[]) => void;
   changed: (file: LibraryFile) => void;
   manage?: (action: LibraryAction, files: LibraryFile[]) => void;
@@ -242,6 +245,16 @@ export function MusicLibrary({
                     加入待播
                   </button>
                 )}
+                {!processing && savePlaylist && (
+                  <button
+                    className="secondary"
+                    disabled={!selectedTracks.length || busy}
+                    onClick={() => savePlaylist(selectedTracks)}
+                  >
+                    <ListMusic />
+                    加入歌单
+                  </button>
+                )}
                 {!processing && process && (
                   <button
                     className="secondary"
@@ -338,9 +351,23 @@ export function MusicLibrary({
                     </td>
                     <td>
                       <div className="library-song">
-                        <Cover track={file.track} />
+                        <Cover
+                          track={file.track}
+                          onPlay={
+                            file.track ? () => play(file.track!) : undefined
+                          }
+                        />
                         <span>
-                          <strong>{file.track?.title || file.name}</strong>
+                          <strong>
+                            {file.track ? (
+                              <SongTitle
+                                track={file.track}
+                                onPlay={() => play(file.track!)}
+                              />
+                            ) : (
+                              file.name
+                            )}
+                          </strong>
                           <small>
                             {file.track
                               ? `${file.track.artist || "未知歌手"} · ${file.track.album || "未知专辑"}`

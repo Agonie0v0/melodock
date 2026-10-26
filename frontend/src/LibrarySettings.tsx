@@ -833,6 +833,68 @@ export function LibrarySettings({
               清除原有认证信息（新填写的值会被保留）
             </label>
           )}
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={!!config.navidrome.delete_enabled}
+              onChange={(e) =>
+                update("navidrome", {
+                  ...config.navidrome,
+                  delete_enabled: e.target.checked,
+                })
+              }
+            />
+            允许删除 Navidrome 曲库原文件（可选）
+          </label>
+          <p className="setting-help">
+            默认关闭。仅在 MeloKeep 可写入 Navidrome
+            使用的同一份音乐目录时启用；无需挂载即可使用播放和歌单管理。
+          </p>
+          {config.navidrome.delete_enabled && (
+            <>
+              <div className="settings-grid">
+                <label>
+                  MeloKeep 中的共享目录
+                  <input
+                    value={config.navidrome.music_root || ""}
+                    placeholder="/music/library"
+                    onChange={(e) =>
+                      update("navidrome", {
+                        ...config.navidrome,
+                        music_root: e.target.value,
+                      })
+                    }
+                  />
+                  <small>
+                    必须已挂载在音乐根目录 {config.file_root}{" "}
+                    内，并具有写入权限。
+                  </small>
+                </label>
+                <label>
+                  Navidrome 中的同一目录
+                  <input
+                    value={config.navidrome.server_music_root || ""}
+                    placeholder="/music"
+                    onChange={(e) =>
+                      update("navidrome", {
+                        ...config.navidrome,
+                        server_music_root: e.target.value,
+                      })
+                    }
+                  />
+                  <small>
+                    填写 Navidrome 容器内的路径，例如 ND_MUSICFOLDER 的值。
+                  </small>
+                </label>
+              </div>
+              <p className="setting-help">
+                例如同一宿主机目录分别挂载为 /music/library 和
+                /music，就填写这两个路径。在 Navidrome 管理界面的播放器（Players
+                / Players &amp; API keys）中，为 melokeep 开启 Report Real
+                Path（报告真实路径）。删除前会显示准确文件路径；确认后永久删除该音频并触发扫描，歌词和封面保留。
+              </p>
+            </>
+          )}
           <div className="management-toolbar">
             <button className="primary" disabled={!!busy}>
               {busy === "nav" ? "正在保存…" : "保存 Navidrome"}

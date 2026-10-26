@@ -58,6 +58,7 @@ Navidrome 歌曲支持列表和卡片视图：
 - 增量显示搜索结果，支持音源筛选、无损 / 普通音质 / MP3 / 音质未知筛选，以及大小、品质、时长、曲名等排序。
 - 搜索默认解析可用的格式和文件大小；也可开启“按需解析”，先展示候选，播放或下载时再获取版本信息。
 - 在线播放、进度拖动、音量和静音、随机和循环播放、待播列表、歌词跟随。LRC 歌词可点击跳转，并可调整显示大小。
+- 点击歌曲封面图标或歌名即可播放，支持搜索结果、歌单、本地音乐库、Navidrome 和下载队列。
 - 单曲和批量下载共用下载队列，可暂停、继续、取消和移除记录。上游支持 HTTP Range 且校验通过时续传，否则重新下载。
 - 可用版本受到登录状态、地区、平台权限和网络影响，下载前会验证实际版本。
 
@@ -66,7 +67,7 @@ Navidrome 歌曲支持列表和卡片视图：
 - 在“歌单”中统一管理自建歌单、我的收藏和平台歌单导入。
 - 搜索结果和当前播放曲目可加入歌单、收藏或待播列表，支持整张歌单播放和批量操作。
 - 导入外部歌单链接或 ID；未导入曲目显示原因，可换源搜索。
-- 自动导入已连接 Navidrome 账号可见的歌单，并支持手动同步。远程歌单在 MeloKeep 中只读，重命名和增删歌曲请在 Navidrome 中操作。
+- 自动导入已连接 Navidrome 账号可见的歌单，并支持手动同步。可以创建、重命名、删除自己的 Navidrome 歌单，以及添加、移除歌曲；权限由 Navidrome 账号决定，移除歌单曲目不会删除原文件。
 
 ### 本地与远程音乐库
 
@@ -228,6 +229,18 @@ docker compose logs -f --tail 100
 仓库提供[同时部署 Navidrome 的 Compose 示例](docker-compose.navidrome.yml)：MeloKeep 整理到 `./music/library`，Navidrome 只读挂载该目录。该示例从当前源码构建 MeloKeep。
 
 本地刮削与整理可以独立使用；远程曲库连接需要已有 Navidrome 服务。
+
+### 可选：删除 Navidrome 曲库原文件
+
+**默认关闭，不挂载共享目录就保持关闭。** 播放、浏览和歌单管理只需要网络连接，不依赖本功能。
+
+1. 把 Navidrome 正在使用的宿主机音乐目录以**可写**方式挂载到 MeloKeep 的 `/music` 内。上面的双服务示例已经共享了 `./music/library`：MeloKeep 路径为 `/music/library`，Navidrome 路径为 `/music`。Navidrome 自己的挂载可以继续只读。
+2. 如果 Navidrome 已独立部署，可以在 MeloKeep 的 Compose `volumes` 中增加 `/你的实际音乐目录:/music/navidrome`；不要新建空目录冒充现有曲库。此时 MeloKeep 路径填 `/music/navidrome`，Navidrome 路径填其容器内实际的音乐目录。
+3. 先连接一次 MeloKeep，再到 Navidrome 管理界面的播放器（Players / Players & API keys）中，为客户端 `melokeep` 开启 **Report Real Path / 报告真实路径**。Navidrome 默认可能返回按标签生成的虚拟路径，MeloKeep 会拒绝用它删除文件，具体见 [Navidrome 路径实现](https://github.com/navidrome/navidrome/blob/master/server/subsonic/helpers.go)。
+4. 在“设置 → Navidrome 连接”启用“允许删除 Navidrome 曲库原文件”，填写两侧绝对路径并保存。目录不存在、超出 MeloKeep 音乐根目录或不可写时无法启用；关闭后删除入口隐藏，服务端也拒绝删除请求。
+5. 在“音乐库 → Navidrome”的歌曲卡片或列表点删除原文件，核对确认框中的歌曲和准确文件路径，再确认永久删除。
+
+删除只针对所选音频，**不能撤销**；不会删除同目录歌词、封面或其他歌曲。程序核对真实路径、文件大小及确认前后文件状态，拒绝符号链接和目录越界；删除后清理 MeloKeep 的对应收藏、待播和本地歌单引用，并请求 Navidrome 扫描。若扫描权限不足，会提示文件已删除并要求手动扫描，远程歌单和曲库的更新以 Navidrome 扫描结果为准。
 
 <a id="telegram-local-bot-api-server"></a>
 

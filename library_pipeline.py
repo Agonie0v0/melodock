@@ -12,7 +12,7 @@ import uuid
 import csv
 import io
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from fastapi import HTTPException
 from fastapi.responses import Response
@@ -187,7 +187,56 @@ class LibraryPipeline:
 
     def nav_settings(self):
         return {'enabled': False, 'url': '', 'username': '', 'password': '', 'api_key': '', 'auto_scan': False,
+                'delete_enabled': False, 'music_root': '', 'server_music_root': '',
                 **self.get('library_setting', 'navidrome', {})}
+
+    def nav_delete_root(self, cfg=None):
+        cfg = cfg or self.nav_settings()
+        if not cfg.get('enabled') or not cfg.get('delete_enabled'):
+            raise HTTPException(409, 'Navidrome 曲库文件删除未启用')
+        root = Path(cfg.get('music_root') or '')
+        server = cfg.get('server_music_root') or ''
+        remote = PureWindowsPath(server) if PureWindowsPath(server).drive else PurePosixPath(server)
+        if not root.is_absolute() or not remote.is_absolute() or '..' in remote.parts:
+            raise HTTPException(400, '请填写共享音乐目录的两个绝对路径')
+        if any(p.is_symlink() or p.is_junction() for p in (root, *root.parents)):
+            raise HTTPException(403, '共享目录不能使用符号链接或目录联接')
+        root = root.resolve()
+        if not root.is_relative_to(self.old.FILE_ROOT.resolve()) or not root.is_dir():
+            raise HTTPException(400, '共享音乐目录必须已挂载到 MeloKeep 音乐根目录内')
+        self.validate_path(root, must_exist=False)
+        if not os.access(root, os.W_OK):
+            raise HTTPException(403, '共享音乐目录没有写入权限，请检查挂载是否为只读')
+        return root, remote
+
+    def nav_delete_preview(self, ident):
+        root, remote = self.nav_delete_root()
+        song = self.navidrome.request('getSong', id=ident).get('song') or {}
+        if str(song.get('id') or '') != ident:
+            raise HTTPException(404, 'Navidrome 歌曲不存在')
+        raw = song.get('path') or ''
+        source = type(remote)(raw)
+        # Navidrome normally reports a synthetic tag-based path. Never guess a filename.
+        if not source.is_absolute() or '..' in source.parts or not source.is_relative_to(remote):
+            raise HTTPException(409, '歌曲未返回映射目录内的真实绝对路径。请在 Navidrome 的播放器设置中为 melokeep 启用 Report Real Path')
+        relative = source.relative_to(remote)
+        if any(part in {'', '.', '..'} or '/' in part or '\\' in part or ':' in part for part in relative.parts):
+            raise HTTPException(403, '歌曲文件路径无效')
+        target = root.joinpath(*relative.parts)
+        if any(p.is_symlink() or p.is_junction() for p in (target, *target.parents)):
+            raise HTTPException(403, '不能删除符号链接或目录联接中的文件')
+        if not target.resolve().is_relative_to(root):
+            raise HTTPException(403, '歌曲文件超出共享目录')
+        target = self.validate_path(target)
+        if target.suffix.lower() not in local_library.AUDIO_EXTENSIONS:
+            raise HTTPException(400, '只能删除音乐文件')
+        info = target.stat()
+        if type(song.get('size')) is not int or song['size'] != info.st_size:
+            raise HTTPException(409, '共享文件大小与 Navidrome 记录不一致，请扫描曲库并检查目录映射')
+        fingerprint = [ident, str(root), str(remote), str(target), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
+        token = hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest()
+        return target, {'revision': token, 'path': str(target), 'title': song.get('title') or target.name,
+                        'size_bytes': info.st_size}
 
     def public_settings(self):
         nav = self.nav_settings()
@@ -1240,6 +1289,11 @@ class LibraryPipeline:
                     value[key] = previous.get(key, '')
             if value['enabled'] and (not value['url'] or not (value.get('api_key') or value.get('username') and value.get('password'))):
                 raise HTTPException(400, '启用 Navidrome 需要服务地址和有效的认证配置')
+            if value['enabled'] and value['delete_enabled']:
+                try:
+                    self.nav_delete_root(value)
+                except OSError:
+                    raise HTTPException(400, '无法读取共享目录，请检查挂载与权限')
             self.put('library_setting', 'navidrome', value)
             return self.public_settings()['navidrome']
 

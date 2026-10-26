@@ -454,3 +454,76 @@ def test_navidrome_authenticated_server_proxy(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_optional_navidrome_delete_mapping_requires_real_paths_and_matching_files(library, monkeypatch):
+    root = library.old.FILE_ROOT / 'shared'
+    audio = wav(root / 'artist' / 'song.wav')
+    cfg = {'enabled': True, 'delete_enabled': True, 'music_root': str(root), 'server_music_root': '/nav/music'}
+    library.put('library_setting', 'navidrome', cfg)
+    song = {'id': 's', 'path': '/nav/music/artist/song.wav', 'size': audio.stat().st_size}
+    monkeypatch.setattr(library.navidrome, 'request', lambda *a, **kw: {'song': song})
+    target, preview = library.nav_delete_preview('s')
+    assert target == audio and preview['path'] == str(audio) and len(preview['revision']) == 64
+    audio.write_bytes(audio.read_bytes() + b'x')
+    with pytest.raises(HTTPException) as error:
+        library.nav_delete_preview('s')
+    assert error.value.status_code == 409
+    song['size'] = audio.stat().st_size
+    assert library.nav_delete_preview('s')[1]['revision'] != preview['revision']
+    for invalid in ['artist/song.wav', '/nav/music/../shared/artist/song.wav', '/nav/music2/artist/song.wav', '/nav/music/artist/..\\song.wav']:
+        song['path'] = invalid
+        with pytest.raises(HTTPException):
+            library.nav_delete_preview('s')
+    song['path'] = '/nav/music/artist/song.wav'
+    cfg['delete_enabled'] = False
+    library.put('library_setting', 'navidrome', cfg)
+    with pytest.raises(HTTPException) as error:
+        library.nav_delete_preview('s')
+    assert error.value.status_code == 409 and audio.exists()
+    cfg.update(delete_enabled=True, music_root=str(root.parent.parent))
+    library.put('library_setting', 'navidrome', cfg)
+    with pytest.raises(HTTPException):
+        library.nav_delete_preview('s')
+    cfg['music_root'] = str(root)
+    library.put('library_setting', 'navidrome', cfg)
+    monkeypatch.setattr('library_pipeline.os.access', lambda *a: False)
+    with pytest.raises(HTTPException) as error:
+        library.nav_delete_preview('s')
+    assert error.value.status_code == 403
+
+
+def test_navidrome_delete_rejects_symlink_components(library):
+    root = library.old.FILE_ROOT / 'shared'
+    audio = wav(root / 'real' / 'song.wav')
+    link = root / 'alias'
+    try:
+        link.symlink_to(audio.parent, target_is_directory=True)
+    except OSError:
+        pytest.skip('Symlink creation requires platform permission')
+    library.put('library_setting', 'navidrome', {'enabled': True, 'delete_enabled': True,
+                'music_root': str(root), 'server_music_root': '/music'})
+    library.navidrome.request = lambda *a, **kw: {'song': {'id': 's', 'path': '/music/alias/song.wav', 'size': audio.stat().st_size}}
+    with pytest.raises(HTTPException) as error:
+        library.nav_delete_preview('s')
+    assert error.value.status_code == 403 and audio.exists()
+
+
+def test_navidrome_delete_settings_are_optional_and_validate_mount_when_enabled(library):
+    app = FastAPI()
+    library.install(app)
+    client = TestClient(app)
+    cfg = {'enabled': True, 'url': 'https://nav.example', 'username': 'u', 'password': 'p'}
+    response = client.put('/api/library/navidrome', json=cfg)
+    assert response.status_code == 200 and response.json()['delete_enabled'] is False
+    cfg.update(delete_enabled=True, music_root=str(library.old.FILE_ROOT / 'unmounted'), server_music_root='/music')
+    assert client.put('/api/library/navidrome', json=cfg).status_code == 400
+    assert library.nav_settings()['delete_enabled'] is False
+    root = library.old.FILE_ROOT / 'mounted'
+    root.mkdir()
+    cfg['music_root'] = str(root)
+    assert client.put('/api/library/navidrome', json=cfg).status_code == 200
+    root.rmdir()
+    # Disabling is always possible even after the mount disappears.
+    cfg['delete_enabled'] = False
+    assert client.put('/api/library/navidrome', json=cfg).status_code == 200

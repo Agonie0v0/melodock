@@ -1198,13 +1198,16 @@ def install(old, root):
 
     @router.delete('/api/files')
     def delete_library_file(path: str):
+        return delete_file(path)
+
+    def delete_file(path, extra_ids=()):
         target = resolve_library_file(path)
         token = file_token(target)
         local_id = library.asset(target)['id'] if target.suffix.lower() in local_library.AUDIO_EXTENSIONS else None
         with db_lock:
             aliases = {row[0] for row in db.execute('SELECT token FROM library_paths WHERE asset_id=?', (local_id,)).fetchall()}
         tokens = aliases | {token, path}
-        local_ids = {local_id, *('local-' + hashlib.sha256(alias.encode()).hexdigest()[:24] for alias in aliases)}
+        local_ids = {local_id, *extra_ids, *('local-' + hashlib.sha256(alias.encode()).hexdigest()[:24] for alias in aliases)}
         try:
             with library.lock(target):
                 resolve_library_file(path).unlink()
@@ -1226,7 +1229,39 @@ def install(old, root):
             collection['tracks'] = [t for t in collection.get('tracks', []) if t.get('id') not in local_ids]
             put('collection', collection['id'], collection)
         old.pushlog('info', f'已删除音乐文件：{target.name}', category='download')
-        return {'deleted': True}
+        return {'deleted': True, 'track_ids': sorted(local_ids - {None})}
+
+    @router.get('/api/navidrome/capabilities')
+    def navidrome_capabilities():
+        try:
+            library.nav_delete_root()
+            return {'delete_songs': True}
+        except (HTTPException, OSError):
+            return {'delete_songs': False}
+
+    @router.get('/api/navidrome/songs/{ident}/deletion')
+    def navidrome_delete_preview(ident: str):
+        try:
+            return library.nav_delete_preview(ident)[1]
+        except OSError:
+            raise HTTPException(409, '无法读取共享文件，请检查挂载目录与权限')
+
+    @router.delete('/api/navidrome/songs/{ident}')
+    def navidrome_delete_song(ident: str, revision: str):
+        try:
+            target, _ = library.nav_delete_preview(ident)
+            with library.lock(target):
+                latest_target, preview = library.nav_delete_preview(ident)
+                if latest_target != target or preview['revision'] != revision:
+                    raise HTTPException(409, '歌曲文件或目录映射已变化，请重新确认删除')
+                result = delete_file(file_token(target), extra_ids=('navidrome-' + ident,))
+        except OSError:
+            raise HTTPException(409, '无法删除共享文件，请检查挂载目录与写入权限')
+        try:
+            result['scan'] = library.navidrome.request('startScan').get('scanStatus') or {}
+        except HTTPException:
+            result['warning'] = '音乐文件已删除，但 Navidrome 扫描未启动，请稍后手动扫描服务器曲库'
+        return result
 
     library.index_file = library_file
     library.install(router)

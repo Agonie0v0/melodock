@@ -1,6 +1,7 @@
 """Server-side OpenSubsonic client. Credentials never appear in browser media URLs."""
 import hashlib
 import math
+import json
 import secrets
 from datetime import datetime
 from urllib.parse import quote, urlsplit
@@ -9,6 +10,7 @@ import requests
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
+from typing import Annotated
 
 
 class NavidromeSettings(BaseModel):
@@ -18,6 +20,9 @@ class NavidromeSettings(BaseModel):
     password: str | None = Field(default=None, max_length=1000)
     api_key: str | None = Field(default=None, max_length=1000)
     auto_scan: bool = False
+    delete_enabled: bool = False
+    music_root: str = Field(default='', max_length=2048)
+    server_music_root: str = Field(default='', max_length=2048)
 
     @field_validator('url')
     @classmethod
@@ -28,6 +33,30 @@ class NavidromeSettings(BaseModel):
             if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
                 raise ValueError('Navidrome 地址应为不含账号、参数的 HTTP / HTTPS 地址')
         return value
+
+
+class PlaylistName(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+    @field_validator('name')
+    @classmethod
+    def valid_name(cls, value):
+        if not value.strip():
+            raise ValueError('请输入歌单名称')
+        return value.strip()
+
+
+class PlaylistSongs(BaseModel):
+    song_ids: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(min_length=1, max_length=3000)
+
+
+class PlaylistCreate(PlaylistName):
+    song_ids: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=3000)
+
+
+class PlaylistRemove(BaseModel):
+    indexes: list[Annotated[int, Field(ge=0, strict=True)]] = Field(min_length=1, max_length=3000)
+    revision: str = Field(min_length=64, max_length=64)
 
 
 class Navidrome:
@@ -48,12 +77,13 @@ class Navidrome:
             params.update(u=cfg['username'], s=salt, t=hashlib.md5((cfg['password'] + salt).encode()).hexdigest())
         return params
 
-    def request(self, endpoint, *, stream=False, headers=None, **params):
+    def request(self, endpoint, *, stream=False, headers=None, method='GET', **params):
         auth = self.params()
         url = self.settings()['url'] + '/rest/' + endpoint + '.view'
         try:
-            response = requests.get(url, params={**params, **auth}, headers=headers or {},
-                                    timeout=(5, 30), stream=stream, allow_redirects=False)
+            options = {'headers': headers or {}, 'timeout': (5, 30), 'stream': stream, 'allow_redirects': False}
+            response = (requests.post(url, data={**params, **auth}, **options) if method == 'POST'
+                        else requests.get(url, params={**params, **auth}, **options))
             if response.status_code not in {200, 206, 416}:
                 response.close()
                 raise HTTPException(502, 'Navidrome 请求失败，请检查服务地址、账号权限和网络')
@@ -62,6 +92,10 @@ class Navidrome:
                     data = response.json().get('subsonic-response', {})
                 if data.get('status') != 'ok':
                     code = (data.get('error') or {}).get('code')
+                    if code == 50:
+                        raise HTTPException(403, '当前 Navidrome 账号没有此操作权限')
+                    if code == 70:
+                        raise HTTPException(404, 'Navidrome 歌单或歌曲不存在，请刷新后重试')
                     raise HTTPException(502, f'Navidrome 接口拒绝请求（错误码 {code}），请检查认证与权限')
                 return data
             if 'json' in response.headers.get('Content-Type', '') or 'xml' in response.headers.get('Content-Type', ''):
@@ -130,18 +164,25 @@ class Navidrome:
                 'artist': item.get('artist') or '', 'year': item.get('year'), 'song_count': item.get('songCount', 0),
                 'cover': '/api/navidrome/cover/' + quote(cover_id, safe='') if cover_id else None}
 
-    @staticmethod
-    def playlist(item):
+    def playlist(self, item):
         cover_id = str(item.get('coverArt') or '')
         try:
             created = int(datetime.fromisoformat(item.get('created') or '').timestamp())
         except (ValueError, TypeError, OverflowError):
             created = 0
+        owner, username = item.get('owner') or '', self.settings().get('username') or ''
+        can_manage = not owner or not username or owner.casefold() == username.casefold()
         return {'id': 'navidrome:' + str(item['id']), 'name': item.get('name') or '未命名歌单',
                 'source': 'navidrome', 'source_url': '', 'created_at': created,
                 'track_count': item.get('songCount', 0), 'issue_count': 0,
                 'cover': '/api/navidrome/cover/' + quote(cover_id, safe='') if cover_id else None,
-                'read_only': True, 'task_id': '', 'detail': '自动同步自 Navidrome；歌单内容以服务器为准。'}
+                'read_only': item.get('readonly') is True or not can_manage, 'can_manage': can_manage,
+                'owner': owner, 'task_id': '', 'detail': '与 Navidrome 同步，修改直接保存到服务器。'}
+
+    @staticmethod
+    def playlist_revision(item):
+        value = [str(item['id']), item.get('changed'), [str(song['id']) for song in item.get('entry') or []]]
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False).encode()).hexdigest()
 
     def media(self, endpoint, ident, request=None):
         headers = {}
@@ -172,10 +213,52 @@ class Navidrome:
             item = self.request('getPlaylist', id=ident).get('playlist') or {}
             if not item.get('id'):
                 raise HTTPException(404, 'Navidrome 歌单不存在或无权访问')
-            tracks = [self.track(song) for song in item.get('entry') or []]
+            tracks = [{**self.track(song), 'playlist_index': index} for index, song in enumerate(item.get('entry') or [])]
             for track in tracks:
                 remember(track)
-            return {**self.playlist(item), 'tracks': tracks, 'issues': []}
+            return {**self.playlist(item), 'revision': self.playlist_revision(item), 'tracks': tracks, 'issues': []}
+
+        @router.post('/api/navidrome/playlists')
+        def create_playlist(body: PlaylistCreate):
+            item = self.request('createPlaylist', method='POST', name=body.name, songId=body.song_ids).get('playlist') or {}
+            if not item.get('id'):
+                raise HTTPException(502, 'Navidrome 未返回新歌单，请同步歌单确认结果后再试')
+            return playlist(str(item['id']))
+
+        @router.patch('/api/navidrome/playlists/{ident}')
+        def rename_playlist(ident: str, body: PlaylistName):
+            current = playlist(ident)
+            if not current['can_manage']:
+                raise HTTPException(403, '只能修改自己拥有的 Navidrome 歌单')
+            self.request('updatePlaylist', method='POST', playlistId=ident, name=body.name)
+            return playlist(ident)
+
+        @router.delete('/api/navidrome/playlists/{ident}')
+        def delete_playlist(ident: str):
+            if not playlist(ident)['can_manage']:
+                raise HTTPException(403, '只能删除自己拥有的 Navidrome 歌单')
+            self.request('deletePlaylist', method='POST', id=ident)
+            return {'success': True}
+
+        @router.post('/api/navidrome/playlists/{ident}/tracks')
+        def add_songs(ident: str, body: PlaylistSongs):
+            if playlist(ident)['read_only']:
+                raise HTTPException(403, '此 Navidrome 歌单为只读或当前账号无编辑权限')
+            self.request('updatePlaylist', method='POST', playlistId=ident, songIdToAdd=body.song_ids)
+            return playlist(ident)
+
+        @router.post('/api/navidrome/playlists/{ident}/tracks/remove')
+        def remove_songs(ident: str, body: PlaylistRemove):
+            current = playlist(ident)
+            if current['read_only']:
+                raise HTTPException(403, '此 Navidrome 歌单为只读或当前账号无编辑权限')
+            if current['revision'] != body.revision:
+                raise HTTPException(409, 'Navidrome 歌单已变化，请同步歌单后重新选择要移除的歌曲')
+            if any(index >= len(current['tracks']) for index in body.indexes):
+                raise HTTPException(400, '歌单歌曲位置无效，请同步歌单后重试')
+            self.request('updatePlaylist', method='POST', playlistId=ident,
+                         songIndexToRemove=sorted(set(body.indexes), reverse=True))
+            return playlist(ident)
 
         @router.get('/api/navidrome/songs')
         def songs(offset: int = 0, size: int = 50):

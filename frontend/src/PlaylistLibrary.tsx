@@ -23,6 +23,7 @@ export function PlaylistLibrary({
   open,
   back,
   onImport,
+  onCreate,
   changed,
   deleted,
   playAll,
@@ -40,6 +41,7 @@ export function PlaylistLibrary({
   open: (id: string) => void;
   back: () => void;
   onImport: () => void;
+  onCreate: () => void;
   changed: (list: SavedPlaylist) => void;
   deleted: (id: string) => void;
   playAll: (tracks: Track[]) => void;
@@ -55,13 +57,19 @@ export function PlaylistLibrary({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const remote = current?.source === "navidrome";
+  const endpoint = current
+    ? remote
+      ? `/navidrome/playlists/${encodeURIComponent(current.id.slice(10))}`
+      : `/playlists/${encodeURIComponent(current.id)}`
+    : "";
   async function save() {
     if (!current) return;
     setBusy(true);
     setError("");
     try {
       changed(
-        await api<SavedPlaylist>(`/playlists/${current.id}`, "PATCH", {
+        await api<SavedPlaylist>(endpoint, "PATCH", {
           name: name.trim(),
         }),
       );
@@ -77,7 +85,7 @@ export function PlaylistLibrary({
     setBusy(true);
     setError("");
     try {
-      await api(`/playlists/${current.id}`, "DELETE");
+      await api(endpoint, "DELETE");
       deleted(current.id);
       setRemoving(false);
     } catch (e) {
@@ -100,6 +108,10 @@ export function PlaylistLibrary({
             />
           </label>
           <span className="muted">{lists.length} 个歌单</span>
+          <button className="secondary" onClick={onCreate}>
+            <Plus />
+            新建歌单
+          </button>
           <button className="secondary" onClick={sync}>
             <RefreshCw />
             同步歌单
@@ -173,7 +185,7 @@ export function PlaylistLibrary({
         <div className="playlist-heading-copy">
           <span className="muted">
             {sourceName(current.source)} ·{" "}
-            {current.read_only
+            {remote
               ? "自动同步"
               : `${new Date(current.created_at * 1000).toLocaleDateString()} 导入`}
           </span>
@@ -201,7 +213,7 @@ export function PlaylistLibrary({
               <Plus />
               加入待播
             </button>
-            {!current.read_only && (
+            {!remote && (
               <button
                 className="secondary"
                 disabled={!current.tracks.length}
@@ -211,7 +223,7 @@ export function PlaylistLibrary({
                 下载全部
               </button>
             )}
-            {!current.read_only && (
+            {(remote ? current.can_manage !== false : !current.read_only) && (
               <>
                 <button
                   className="secondary"
@@ -244,10 +256,12 @@ export function PlaylistLibrary({
           Navidrome 歌单同步失败：{syncError}
         </p>
       )}
-      {current.read_only && (
+      {remote && (
         <div className="management-toolbar">
           <p className="setting-help">
-            与 Navidrome 自动同步；重命名和增删歌曲请在 Navidrome 中操作。
+            {current.read_only
+              ? "此歌单为只读或当前账号无歌曲编辑权限；歌曲可以播放和加入待播。"
+              : "与 Navidrome 同步，修改会直接保存到服务器；从歌单移除歌曲不会删除音乐文件。"}
           </p>
           <button className="secondary" onClick={sync}>
             <RefreshCw />
@@ -329,7 +343,12 @@ export function PlaylistLibrary({
       )}
       {removing && (
         <Modal title="删除歌单" close={() => !busy && setRemoving(false)}>
-          <p>删除「{current.name}」？已下载文件、收藏和待播列表会保留。</p>
+          <p>
+            删除{remote ? " Navidrome 上的" : ""}「{current.name}」？
+            {remote
+              ? "其他客户端也将无法看到该歌单，音乐文件会保留。"
+              : "已下载文件、收藏和待播列表会保留。"}
+          </p>
           {error && <p role="alert">{error}</p>}
           <div className="dialog-actions">
             <button
