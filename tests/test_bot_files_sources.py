@@ -308,7 +308,7 @@ def test_large_upload_streams_without_reading_whole_file(setup_bot, api_url):
     bot.send(store.values('bot_outbox')[-1])
     messages = [call.args[1] for call in bot.log.call_args_list]
     assert any('超过 50 MB' in text and '104857600 字节' in text for text in messages)
-    assert any('sendAudio 上传成功' in text and 'API 消息类型 audio，MIME audio/flac' in text for text in messages)
+    assert any('sendAudio 发送成功' in text and 'API 消息类型 audio，MIME audio/flac' in text for text in messages)
 
 
 @pytest.mark.parametrize('reason', ['Telegram API error 413: file too big',
@@ -358,7 +358,7 @@ def test_flac_format_rejection_sends_original_document_from_the_start(setup_bot)
     assert audio.read_bytes() == original
     messages = [call.args[1] for call in bot.log.call_args_list]
     assert any('AUDIO_CONTENT_TYPE_INVALID' in text and '改用 sendDocument' in text for text in messages)
-    assert any('sendDocument 上传成功' in text for text in messages)
+    assert any('sendDocument 发送成功' in text for text in messages)
     bot.enqueue.assert_not_called()
 
 

@@ -1101,9 +1101,18 @@ try {
   for (const width of [320, 390, 680, 800, 801, 1024, 1440, 1920]) {
     await page.setViewportSize({ width, height: 1000 });
     const controls = page.locator(".full-player-controls");
-    const panel = await controls.boundingBox();
-    const transport = await controls.locator(".transport").boundingBox();
-    const volume = await controls.locator(".player-extras").boundingBox();
+    // Read one layout snapshot; viewport changes can reflow between CDP calls.
+    const { panel, transport, volume } = await controls.evaluate((element) => ({
+      panel: element.getBoundingClientRect().toJSON(),
+      transport: element
+        .querySelector(".transport")
+        .getBoundingClientRect()
+        .toJSON(),
+      volume: element
+        .querySelector(".player-extras")
+        .getBoundingClientRect()
+        .toJSON(),
+    }));
     assert.ok(
       Math.abs(
         transport.y + transport.height / 2 - volume.y - volume.height / 2,
@@ -1213,7 +1222,10 @@ try {
   await mkdir("../output", { recursive: true });
   await page.screenshot({ path: "../output/test-ui-player.png" });
   await changeTheme("dark");
-  await page.screenshot({ path: "../output/test-ui-player-dark.png" });
+  await page.screenshot({
+    path: "../output/test-ui-player-dark.png",
+    style: "#toast { visibility: hidden; }",
+  });
   await changeTheme("light");
   await page.getByRole("button", { name: "收藏当前曲目", exact: true }).click();
   assert.equal(favorites.length, 1);
@@ -1956,6 +1968,17 @@ try {
     page.getByRole("status").filter({ hasText: "曲库设置已保存" }),
   ).toBeVisible();
   assert.ok(libraryConfig.auto_scrape && libraryConfig.auto_organize);
+  await page.locator(".template-help details summary").click();
+  await page.locator(".template-help").screenshot({
+    path: "../output/test-ui-template-help-mobile.png",
+    style: ".sidebar, #toast { visibility: hidden; }",
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator(".template-help").screenshot({
+    path: "../output/test-ui-template-help-desktop.png",
+    style: ".sidebar, #toast { visibility: hidden; }",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByText("启用 Navidrome", { exact: true })).toHaveCount(
     0,
   );
@@ -2171,6 +2194,9 @@ try {
   }
   await page.setViewportSize({ width: 1920, height: 1000 });
   await page.screenshot({ path: "../output/test-ui-settings-wide.png" });
+  await page.locator(".engine-switches").screenshot({
+    path: "../output/test-ui-engine-checkboxes.png",
+  });
   await changeTheme("dark");
   await page.screenshot({ path: "../output/test-ui-settings-dark.png" });
   await changeTheme("light");
@@ -2374,6 +2400,7 @@ try {
     if (width === 390)
       await page.screenshot({
         path: "../output/test-ui-navidrome-playlist-mobile.png",
+        style: "#toast { visibility: hidden; }",
       });
   }
   await page.setViewportSize({ width: 1920, height: 1080 });

@@ -280,21 +280,31 @@ export function LibrarySettings({
                 目录模板
                 <input
                   required
+                  aria-label="目录模板"
+                  aria-describedby="folder-template-help"
                   value={config.folder_template}
                   onChange={(e) => update("folder_template", e.target.value)}
                 />
-                <small>{"示例：{album_artist}/{album}"}</small>
+                <small id="folder-template-help">
+                  决定音乐库内的子文件夹，用 / 分隔层级。
+                  {
+                    "例如 {album_artist}/{album} 会生成“专辑歌手/专辑”两层目录，不要填写完整路径。"
+                  }
+                </small>
               </label>
               <label>
                 文件名模板
                 <input
                   required
+                  aria-label="文件名模板"
+                  aria-describedby="filename-template-help"
                   value={config.filename_template}
                   onChange={(e) => update("filename_template", e.target.value)}
                 />
-                <small>
+                <small id="filename-template-help">
+                  只决定文件的名称，不含目录和扩展名。
                   {
-                    "示例：{track_number} - {title}，扩展名自动保留。缺少曲序时省略序号。"
+                    "例如 {track_number} - {title} 会生成“03 - 晴天.flac”；曲序自动补零，扩展名自动保留。"
                   }
                 </small>
               </label>
@@ -323,6 +333,108 @@ export function LibrarySettings({
                 </select>
               </label>
             </div>
+            <section
+              className="template-help"
+              aria-labelledby="template-help-title"
+            >
+              <h3 id="template-help-title">整理模板怎么填写</h3>
+              <p>
+                花括号中的英文是变量，整理时会替换成歌曲最终的标签内容；
+                花括号外的空格、横线等文字会保留。修改英文变量之间的顺序和分隔符即可，
+                不要把变量名翻译成中文。整理路径由“音乐库目录＋目录模板＋文件名模板＋原扩展名”组成。
+              </p>
+              <p>
+                <strong>完整示例：</strong>
+                假设歌曲为周杰伦《叶惠美》中的《晴天》，曲序为 3，发行年份为
+                2003， 原文件格式为 FLAC。按照下面的设置整理：
+              </p>
+              <dl className="template-example">
+                <dt>音乐库目录</dt>
+                <dd>
+                  <code>/music/library</code>
+                </dd>
+                <dt>目录模板</dt>
+                <dd>
+                  <code>{"{album_artist}/{album}"}</code>
+                </dd>
+                <dt>文件名模板</dt>
+                <dd>
+                  <code>{"{track_number} - {title}"}</code>
+                </dd>
+                <dt>最终文件路径</dt>
+                <dd>
+                  <code>/music/library/周杰伦/叶惠美/03 - 晴天.flac</code>
+                </dd>
+              </dl>
+              <details className="library-advanced">
+                <summary>查看常用变量、更多写法与缺失标签的处理</summary>
+                <table className="template-variables">
+                  <thead>
+                    <tr>
+                      <th>变量</th>
+                      <th>含义</th>
+                      <th>示例</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ["album_artist", "专辑歌手；未填写时使用歌手", "周杰伦"],
+                      ["artist", "歌曲的歌手", "周杰伦"],
+                      ["album", "专辑名称", "叶惠美"],
+                      ["title", "歌曲标题", "晴天"],
+                      ["track_number", "曲序，自动补足至少两位", "03"],
+                      ["disc_number", "碟号", "1"],
+                      ["year", "发行日期的前四位", "2003"],
+                      ["date", "完整发行日期，以歌曲标签为准", "2003-07-31"],
+                      ["genre", "流派", "流行"],
+                      ["first_artist", "合作歌曲中的第一位歌手", "周杰伦"],
+                      [
+                        "first_artist_letter",
+                        "第一位歌手的拼音或名称首字母",
+                        "Z",
+                      ],
+                      [
+                        "file_song_name",
+                        "原文件名，不含扩展名",
+                        "原始下载文件",
+                      ],
+                    ].map(([variable, meaning, example]) => (
+                      <tr key={variable}>
+                        <td>
+                          <code>{`{${variable}}`}</code>
+                        </td>
+                        <td>{meaning}</td>
+                        <td>{example}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p>
+                  <strong>想把年份放到专辑前：</strong>
+                  {
+                    "目录模板改为 {album_artist}/{year} - {album}，文件名模板不变，结果为 "
+                  }
+                  <code>
+                    /music/library/周杰伦/2003 - 叶惠美/03 - 晴天.flac
+                  </code>
+                  。
+                </p>
+                <p>
+                  <strong>想按歌手归档，并在文件名中显示歌手：</strong>
+                  {
+                    "目录模板填 {artist}，文件名模板填 {artist} - {title}，结果为 "
+                  }
+                  <code>/music/library/周杰伦/周杰伦 - 晴天.flac</code>。
+                </p>
+                <p>
+                  歌手缺失时使用“未知歌手”，专辑缺失时使用“未知专辑”，
+                  标题缺失时使用原文件名；默认文件名模板缺少曲序时会生成“晴天.flac”。
+                  其他缺失变量会替换为空文本。文件名中不要填写 /
+                  或反斜线，也不要手动加 .flac、.mp3。
+                  修改设置并保存后，对之后的整理任务生效；已有文件可在“刮削整理”中先预览目标路径再应用。
+                </p>
+              </details>
+            </section>
             <MetadataSources
               config={config}
               change={(sources) => update("sources", sources)}

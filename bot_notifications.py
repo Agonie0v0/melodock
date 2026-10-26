@@ -839,10 +839,10 @@ class BotService:
             text += '\n' + concise(job['processing'].get('detail', ''), 120)
         if message['channel'] == 'wecom' and target.stat().st_size > limit:
             if self.links:
-                self.reply(message, text + f'\n文件超过该渠道上传上限（{format_size(limit)}），请通过链接下载原文件。',
+                self.reply(message, text + f'\n文件超过该渠道发送上限（{format_size(limit)}），请通过链接下载原文件。',
                            url=self.links.create(job), job_id=job['id'])
             else:
-                self.reply(message, text + '\n文件超过上传上限，请在通知设置中填写访问地址后获取链接，或配置自建 Telegram Bot API。')
+                self.reply(message, text + '\n文件超过发送上限，请在通知设置中填写访问地址后获取链接，或配置自建 Telegram Bot API。')
             return
         self.reply(message, text, job_id=job['id'], file=True)
 
@@ -856,7 +856,7 @@ class BotService:
             method = 'sendAudio' if audio else 'sendDocument'
             field = 'audio' if audio else 'document'
             size = target.stat().st_size
-            self.log('info', f'Telegram 开始上传：{concise(target.name)} · {format_size(size)}（{size} 字节）· {method}' +
+            self.log('info', f'Telegram 开始发送：{concise(target.name)} · {format_size(size)}（{size} 字节）· {method}' +
                      ('；超过 50 MB，仍尝试直接发送，以 API 实际响应为准' if size > 50 * 1024 * 1024 else ''),
                      category='bot', task_id=job['id'])
             body = {'chat_id': item['user'], 'caption': item['text'][:1000]}
@@ -878,7 +878,7 @@ class BotService:
                                          timeout=(15, 600), files={'document': (target.name, handle)})
             media_type = next((key for key in ('audio', 'document') if isinstance(sent, dict) and key in sent), '')
             media = sent[media_type] if media_type else {}
-            self.log('info', f'Telegram {method} 上传成功：{concise(target.name)} · {format_size(size)}（{size} 字节）' +
+            self.log('info', f'Telegram {method} 发送成功：{concise(target.name)} · {format_size(size)}（{size} 字节）' +
                      (f'；API 消息类型 {media_type}，MIME {concise(media.get("mime_type") or "未提供")}' if media_type else ''),
                      category='bot', task_id=job['id'])
             return
@@ -971,10 +971,10 @@ class BotService:
                 url = self.links.create(job) if self.links else None
                 raw_reason = self.error_detail(error)
                 reason = self.error_reason(error)
-                self.log('warning', f'Telegram 已尝试上传，但接口拒绝文件大小：{self.job_size(job)} · {raw_reason}；' +
+                self.log('warning', f'Telegram 已尝试发送，但接口拒绝文件大小：{self.job_size(job)} · {raw_reason}；' +
                          ('改发原文件下载链接' if url else '未配置访问地址，改发失败原因，请在 Web 下载原文件'),
                          category='bot', task_id=item['job_id'])
-                item.update(file=False, url=url, text=item['text'] + f'\nTelegram 拒绝了文件上传：{reason}\n' +
+                item.update(file=False, url=url, text=item['text'] + f'\nTelegram 拒绝了文件发送：{reason}\n' +
                             ('已改为原文件下载链接。' if url else '请在 Web 下载原文件，或在通知设置中填写访问地址后获取链接。'))
                 # The delivery worker persists this mutation on failure; retries then only send the link.
         if item['channel'] == 'tg':

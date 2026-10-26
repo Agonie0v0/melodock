@@ -177,6 +177,50 @@
 .library-settings .settings-grid {
   margin: 22px 0;
 }
+.template-help {
+  margin: 24px 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.template-help h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.template-help p {
+  margin: 8px 0 12px;
+}
+.template-example {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 16px 0;
+}
+.template-example dt {
+  color: var(--muted);
+}
+.template-example dd {
+  min-width: 0;
+  margin: 0;
+}
+.template-variables {
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+  text-align: left;
+}
+.template-help .template-variables :is(th, td) {
+  display: table-cell;
+  width: auto;
+  padding: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+}
+.template-variables th:first-child {
+  width: 30%;
+}
 .library-settings .settings-grid small,
 .library-switch small,
 .batch-tag-fields small,

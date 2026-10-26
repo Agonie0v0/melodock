@@ -204,7 +204,7 @@ export function BotSettings() {
         <p>
           Telegram 和企业微信选择曲目后直接发送原文件。Telegram 的 MP3 / M4A /
           FLAC 优先以音频消息发送，格式被拒绝时改发普通文件。Telegram
-          大文件也先尝试上传，接口拒绝大小后再发送下载链接。
+          大文件也先尝试发送，接口拒绝大小后再发送下载链接。
         </p>
         <div className="settings-grid">
           {field("public_url", "公网访问地址", "http://192.168.1.20:8765")}
@@ -301,7 +301,7 @@ export function BotSettings() {
             checked={Boolean(config.tg_local_enabled)}
             onChange={(e) => update("tg_local_enabled", e.target.checked)}
           />
-          使用内置 Telegram 本地服务（大文件上传）
+          使用内置 Telegram 本地服务（大文件发送）
         </label>
         {config.tg_local_enabled && (
           <div className="local-api-settings">
@@ -331,7 +331,7 @@ export function BotSettings() {
                 my.telegram.org
               </a>{" "}
               获取应用凭据，与 Bot Token 不同。
-              保存后自动启动官方本地模式服务，上传支持最高 2000
+              保存后自动启动官方本地模式服务，向聊天发送单个文件支持最高 2000
               MB。首次切换会退出原 API 服务；切回云端可能需要等待 Telegram
               规定的 10 分钟。 本地服务需要服务器网络能直连 Telegram，下面的
               HTTP 代理仅用于外部 Bot API 请求。
@@ -343,10 +343,10 @@ export function BotSettings() {
           ID；使用长轮询接收命令，请移除该机器人的已有 webhook。
           项目代理地址在“设置 →
           音源与下载”中配置和修改，选择后与音源共用。Telegram
-          文档标注云端上传上限为 50 MB，自建 Local Bot API（需以 --local
+          文档标注云端文件发送上限为 50 MB，自建 Local Bot API（需以 --local
           启动）为 2000
           MB；项目不按这两个数值提前拦截，均先尝试发送，以接口实际响应为准。
-          上传大小、发送方式、成功或拒绝原因均会记录在运行日志中。FLAC
+          文件大小、发送方式、成功或拒绝原因均会记录在运行日志中。FLAC
           直接发送原文件，不转码；聊天内能否播放取决于客户端。
         </p>
         <button

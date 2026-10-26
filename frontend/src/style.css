@@ -4113,7 +4113,7 @@ dialog::backdrop {
 }
 .engine-switches .check-label {
   margin: 0;
-  align-items: flex-start;
+  align-items: center;
   padding: 12px 14px;
   border-radius: 12px;
   background: var(--surface);
@@ -4134,7 +4134,7 @@ dialog::backdrop {
   }
 }
 .engine-switches input {
-  margin-top: 3px;
+  margin: 0;
   flex: none;
 }
 .engine-switches small,
