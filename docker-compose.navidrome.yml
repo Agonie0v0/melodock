@@ -1,8 +1,8 @@
 # 从当前源码构建，避免依赖尚未发布此功能的 latest 镜像。
 services:
-  musicdl-webui:
+  melodock-webui:
     build: .
-    image: musicdl-local:library
+    image: melodock-local:library
     restart: unless-stopped
     init: true
     ports:
@@ -11,8 +11,8 @@ services:
       - ./music:/music
       - ./data:/data
     environment:
-      MUSICDL_USER: admin
-      MUSICDL_PASS: '请改成你自己的强密码'
+      MELODOCK_USER: admin
+      MELODOCK_PASS: '请改成你自己的强密码'
       # PUID: '1000'
       # PGID: '1000'
 

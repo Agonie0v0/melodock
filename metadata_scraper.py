@@ -254,7 +254,7 @@ class MetadataScraper:
             time.sleep(max(0, self.mb_next_request - time.monotonic()))
             self.mb_next_request = time.monotonic() + 1.1
             response = requests.get(f'https://musicbrainz.org/ws/2/{path}', params={**params, 'fmt': 'json'},
-                                    headers={'User-Agent': 'MusicDL/3.0 (https://github.com/Agonie0v0/musicdl)'},
+                                    headers={'User-Agent': 'MeloDock/3.0 (https://github.com/Agonie0v0/melodock)'},
                                     proxies={'http': proxy, 'https': proxy} if proxy else {}, timeout=(5, 12))
             response.raise_for_status()
             return response.json()
@@ -445,7 +445,7 @@ class MetadataScraper:
         cfg = self.engine_config()
         proxy = cfg.get('proxy_url') if cfg.get('proxy_scope') == 'all' else None
         with requests.get(url, stream=True, timeout=(5, 15), proxies={'http': proxy, 'https': proxy} if proxy else {},
-                          headers={'User-Agent': 'MusicDL/1.0'}, allow_redirects=True) as response:
+                          headers={'User-Agent': 'MeloDock/3.0'}, allow_redirects=True) as response:
             response.raise_for_status()
             chunks, length = [], 0
             for chunk in response.iter_content(65536):

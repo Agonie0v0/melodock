@@ -1,6 +1,8 @@
 """Server-side OpenSubsonic client. Credentials never appear in browser media URLs."""
 import hashlib
+import math
 import secrets
+from datetime import datetime
 from urllib.parse import quote, urlsplit
 
 import requests
@@ -36,7 +38,7 @@ class Navidrome:
         cfg = self.settings()
         if not cfg.get('enabled') or not cfg.get('url'):
             raise HTTPException(409, '请先在设置中配置并启用 Navidrome')
-        params = {'v': '1.16.1', 'c': 'musicdl', 'f': 'json'}
+        params = {'v': '1.16.1', 'c': 'melodock', 'f': 'json'}
         if cfg.get('api_key'):
             params['apiKey'] = cfg['api_key']
         else:
@@ -82,12 +84,64 @@ class Navidrome:
                 'playback': {'state': 'ready', 'url': '/api/navidrome/stream/' + quote(ident, safe=''),
                              'codec': codec, 'bitrate': song.get('bitRate'), 'detail': 'Navidrome 音乐库', 'preview_only': False}}
 
+    def lyrics(self, ident, *, artist='', title=''):
+        """Prefer song-specific timing over the legacy artist/title text lookup."""
+        try:
+            data = self.request('getLyricsBySongId', id=ident)
+        except HTTPException:
+            data = {}
+        plain = ''
+        for entry in (data.get('lyricsList') or {}).get('structuredLyrics') or []:
+            if not isinstance(entry, dict):
+                continue
+            rows = [row for row in entry.get('line') or [] if isinstance(row, dict) and isinstance(row.get('value'), str)]
+            text = '\n'.join(row['value'] for row in rows).strip()
+            if not text:
+                continue
+            plain = plain or text
+            if entry.get('synced') is not True:
+                continue
+            offset = entry.get('offset') or 0
+            if not isinstance(offset, (int, float)) or not math.isfinite(offset):
+                offset = 0
+            timed = []
+            for row in rows:
+                start = row.get('start')
+                if not isinstance(start, (int, float)) or isinstance(start, bool) or not math.isfinite(start) or start < 0:
+                    continue
+                # OpenSubsonic offset is milliseconds: positive means earlier.
+                milliseconds = max(0, round(start - offset))
+                minutes, remainder = divmod(milliseconds, 60000)
+                seconds, fraction = divmod(remainder, 1000)
+                timed.append(f'[{minutes:02}:{seconds:02}.{fraction:03}]{row["value"]}')
+            if timed:
+                return '\n'.join(timed)
+        if plain:
+            return plain
+        try:
+            return (self.request('getLyrics', artist=artist, title=title).get('lyrics') or {}).get('value') or ''
+        except HTTPException:
+            return ''
+
     @staticmethod
     def album(item):
         cover_id = str(item.get('coverArt') or '')
         return {'id': str(item['id']), 'name': item.get('name') or item.get('title') or '未知专辑',
                 'artist': item.get('artist') or '', 'year': item.get('year'), 'song_count': item.get('songCount', 0),
                 'cover': '/api/navidrome/cover/' + quote(cover_id, safe='') if cover_id else None}
+
+    @staticmethod
+    def playlist(item):
+        cover_id = str(item.get('coverArt') or '')
+        try:
+            created = int(datetime.fromisoformat(item.get('created') or '').timestamp())
+        except (ValueError, TypeError, OverflowError):
+            created = 0
+        return {'id': 'navidrome:' + str(item['id']), 'name': item.get('name') or '未命名歌单',
+                'source': 'navidrome', 'source_url': '', 'created_at': created,
+                'track_count': item.get('songCount', 0), 'issue_count': 0,
+                'cover': '/api/navidrome/cover/' + quote(cover_id, safe='') if cover_id else None,
+                'read_only': True, 'task_id': '', 'detail': '自动同步自 Navidrome；歌单内容以服务器为准。'}
 
     def media(self, endpoint, ident, request=None):
         headers = {}
@@ -106,6 +160,34 @@ class Navidrome:
         return StreamingResponse(chunks(), status_code=response.status_code, headers=allowed)
 
     def install(self, router, remember):
+        @router.get('/api/navidrome/playlists')
+        def playlists():
+            if not self.settings().get('enabled'):
+                return []
+            items = (self.request('getPlaylists').get('playlists') or {}).get('playlist') or []
+            return [self.playlist(item) for item in items]
+
+        @router.get('/api/navidrome/playlists/{ident}')
+        def playlist(ident: str):
+            item = self.request('getPlaylist', id=ident).get('playlist') or {}
+            if not item.get('id'):
+                raise HTTPException(404, 'Navidrome 歌单不存在或无权访问')
+            tracks = [self.track(song) for song in item.get('entry') or []]
+            for track in tracks:
+                remember(track)
+            return {**self.playlist(item), 'tracks': tracks, 'issues': []}
+
+        @router.get('/api/navidrome/songs')
+        def songs(offset: int = 0, size: int = 50):
+            if offset < 0 or not 1 <= size <= 100:
+                raise HTTPException(400, '歌曲分页参数无效')
+            items = (self.request('search3', query='', songCount=size + 1, songOffset=offset,
+                                  albumCount=0, artistCount=0).get('searchResult3') or {}).get('song') or []
+            tracks = [self.track(song) for song in items[:size]]
+            for track in tracks:
+                remember(track)
+            return {'tracks': tracks, 'has_more': len(items) > size}
+
         @router.get('/api/navidrome/albums')
         def albums(offset: int = 0, size: int = 48, sort: str = 'newest'):
             if offset < 0 or not 1 <= size <= 100 or sort not in {'newest', 'alphabeticalByName', 'alphabeticalByArtist', 'recent', 'starred'}:

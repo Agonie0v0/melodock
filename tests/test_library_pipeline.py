@@ -28,6 +28,23 @@ def wav(path):
     return path
 
 
+def test_embedded_synchronized_lyrics_and_sidecar_priority(tmp_path):
+    from mutagen.id3 import SYLT
+    path = wav(tmp_path / 'synced.wav')
+    local_library.write_metadata(path, {}, lyrics='纯文本歌词')
+    audio = local_library.mutagen.File(path)
+    audio.tags.add(SYLT(encoding=3, lang='zho', format=2, type=1,
+                        text=[('第一句', 1250), ('第二句', 65001)]))
+    audio.save()
+    assert local_library.read_lyrics(path) == '[00:01.250]第一句\n[01:05.001]第二句'
+    path.with_suffix('.lrc').write_text('[00:02]外置歌词', encoding='utf-8-sig')
+    assert local_library.read_lyrics(path) == '[00:02]外置歌词'
+    assert local_library.read_lyrics(path, prefer_sidecar=False).startswith('[00:01.250]')
+    local_library.write_metadata(path, {}, lyrics='[00:03]替换歌词')
+    assert local_library.read_lyrics(path, prefer_sidecar=False) == '[00:03]替换歌词'
+    assert not local_library.mutagen.File(path).tags.getall('SYLT')
+
+
 @pytest.fixture
 def library(tmp_path, monkeypatch):
     root = tmp_path / 'music'

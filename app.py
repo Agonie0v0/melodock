@@ -2,9 +2,11 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from runtime_config import apply_environment_aliases
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / '.env')
+apply_environment_aliases()
 os.environ.setdefault('MUSICDL_PROJECT_DIR', str(ROOT))
 os.environ.setdefault('MUSICDL_HOST', os.environ.get('MUSICDL_BIND', '127.0.0.1'))
 if os.environ.get('MUSICDL_DOWNLOAD_DIR'):
@@ -14,6 +16,7 @@ from legacy import app as original
 from engine_api import install
 
 app = original.app
+app.title = 'MeloDock'
 # Spawned playlist workers must not reopen the API database or recover downloads.
 if __name__ != '__mp_main__':
     install(original, ROOT)

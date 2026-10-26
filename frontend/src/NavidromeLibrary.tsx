@@ -7,6 +7,9 @@ import {
   RefreshCw,
   Search,
   Users,
+  Music2,
+  LayoutGrid,
+  List,
 } from "lucide-react";
 import { api } from "./api";
 import { Cover, Button } from "./components";
@@ -30,6 +33,15 @@ interface AlbumDetail extends Album {
   tracks: Track[];
 }
 
+function preference(key: string, values: string[], fallback: string) {
+  try {
+    const value = localStorage.getItem(key);
+    return value && values.includes(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export function NavidromeLibrary({
   play,
   queue,
@@ -39,7 +51,24 @@ export function NavidromeLibrary({
   queue: (tracks: Track[]) => void;
   openSettings: () => void;
 }) {
-  const [mode, setMode] = useState("albums");
+  const [mode, setMode] = useState(() =>
+    preference(
+      "melodock-navidrome-mode",
+      ["songs", "albums", "artists"],
+      "songs",
+    ),
+  );
+  const [layout, setLayout] = useState(() =>
+    preference("melodock-navidrome-layout", ["cards", "list"], "list"),
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem("melodock-navidrome-mode", mode);
+      localStorage.setItem("melodock-navidrome-layout", layout);
+    } catch {
+      /* Preferences are optional. */
+    }
+  }, [mode, layout]);
   const [sort, setSort] = useState("newest");
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
@@ -90,7 +119,19 @@ export function NavidromeLibrary({
         setAlbums(data.albums);
         setTracks([]);
         setHasMore(false);
+      } else if (mode === "songs") {
+        const data = await api<{ tracks: Track[]; has_more: boolean }>(
+          `/navidrome/songs?offset=${offset}&size=50`,
+          "GET",
+          undefined,
+          abort.signal,
+        );
+        setTracks(data.tracks);
+        setAlbums([]);
+        setHasMore(data.has_more);
       } else if (mode === "artists") {
+        setTracks([]);
+        setAlbums([]);
         setArtists(
           await api<Artist[]>(
             "/navidrome/artists",
@@ -169,12 +210,13 @@ export function NavidromeLibrary({
     setOffset(0);
   }
   const shownTracks = album?.tracks || tracks;
+  const pageSize = query || mode === "songs" ? 50 : 48;
   return (
     <section className="view navidrome-library">
       <div className="library-heading">
         <div>
           <h2>Navidrome 音乐库</h2>
-          <p>浏览服务器中的专辑与歌手，在当前播放器中收听。</p>
+          <p>直接浏览全部歌曲，或按专辑、歌手查找。</p>
         </div>
         <div className="library-heading-actions">
           <button
@@ -211,9 +253,18 @@ export function NavidromeLibrary({
         </p>
       )}
       <div className="library-toolbar">
-        <div className="library-modes">
+        <div className="library-modes" aria-label="曲库分类">
+          <button
+            className={mode === "songs" && !query ? "active" : ""}
+            aria-pressed={mode === "songs" && !query}
+            onClick={() => reset("songs")}
+          >
+            <Music2 />
+            全部歌曲
+          </button>
           <button
             className={mode === "albums" && !query ? "active" : ""}
+            aria-pressed={mode === "albums" && !query}
             onClick={() => reset("albums")}
           >
             <Disc3 />
@@ -221,6 +272,7 @@ export function NavidromeLibrary({
           </button>
           <button
             className={mode === "artists" && !query ? "active" : ""}
+            aria-pressed={mode === "artists" && !query}
             onClick={() => reset("artists")}
           >
             <Users />
@@ -251,6 +303,26 @@ export function NavidromeLibrary({
             搜索
           </button>
         </form>
+        <div className="library-modes" role="group" aria-label="曲库显示方式">
+          <button
+            aria-label="卡片显示"
+            aria-pressed={layout === "cards"}
+            className={layout === "cards" ? "active" : ""}
+            onClick={() => setLayout("cards")}
+          >
+            <LayoutGrid />
+            卡片
+          </button>
+          <button
+            aria-label="列表显示"
+            aria-pressed={layout === "list"}
+            className={layout === "list" ? "active" : ""}
+            onClick={() => setLayout("list")}
+          >
+            <List />
+            列表
+          </button>
+        </div>
         {!query && mode === "albums" && !artist && (
           <select
             aria-label="Navidrome 专辑排序"
@@ -334,7 +406,35 @@ export function NavidromeLibrary({
           )}
           {!album && artist && <h3>{artist.name}的专辑</h3>}
           {!album && query && <h3>“{query}”的搜索结果</h3>}
-          {shownTracks.length > 0 && (
+          {shownTracks.length > 0 && layout === "cards" && (
+            <div className="nav-song-cards">
+              {shownTracks.map((track) => (
+                <article className="nav-song-card" key={track.id}>
+                  <Cover track={track} large />
+                  <strong>{track.title}</strong>
+                  <span>{track.artist || "未知歌手"}</span>
+                  <small>
+                    {track.album || "未知专辑"} · {clock(track.duration)}
+                  </small>
+                  <div className="library-actions">
+                    <Button
+                      label={`播放 ${track.title}`}
+                      onClick={() => play(track)}
+                    >
+                      <Play />
+                    </Button>
+                    <Button
+                      label={`加入待播 ${track.title}`}
+                      onClick={() => queue([track])}
+                    >
+                      <Plus />
+                    </Button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+          {shownTracks.length > 0 && layout === "list" && (
             <div className="music-table-wrap">
               <table className="music-table">
                 <thead>
@@ -384,11 +484,19 @@ export function NavidromeLibrary({
             </div>
           )}
           {!album && !(mode === "artists" && !query && !artist) && (
-            <div className="saved-playlists nav-albums">
+            <div
+              className={
+                layout === "cards"
+                  ? "saved-playlists nav-albums"
+                  : "nav-album-list"
+              }
+            >
               {albums.map((item) => (
                 <button
                   key={item.id}
-                  className="saved-playlist"
+                  className={
+                    layout === "cards" ? "saved-playlist" : "nav-album-row"
+                  }
                   onClick={() => void openAlbum(item)}
                 >
                   <Cover track={item} large />
@@ -402,7 +510,7 @@ export function NavidromeLibrary({
             </div>
           )}
           {!album && mode === "artists" && !query && !artist && (
-            <div className="nav-artists">
+            <div className={`nav-artists nav-artists-${layout}`}>
               {artists.map((item) => (
                 <button
                   className="nav-artist"
@@ -437,17 +545,15 @@ export function NavidromeLibrary({
               <button
                 className="secondary"
                 disabled={!offset}
-                onClick={() =>
-                  setOffset(Math.max(0, offset - (query ? 50 : 48)))
-                }
+                onClick={() => setOffset(Math.max(0, offset - pageSize))}
               >
                 上一页
               </button>
-              <span>第 {Math.floor(offset / (query ? 50 : 48)) + 1} 页</span>
+              <span>第 {Math.floor(offset / pageSize) + 1} 页</span>
               <button
                 className="secondary"
                 disabled={!hasMore}
-                onClick={() => setOffset(offset + (query ? 50 : 48))}
+                onClick={() => setOffset(offset + pageSize)}
               >
                 下一页
               </button>

@@ -5,7 +5,7 @@ export interface LyricLine {
 export function parseLrc(text: string): LyricLine[] {
   const offset = Number(text.match(/\[offset:([+-]?\d+)\]/i)?.[1] || 0) / 1000;
   const lines: LyricLine[] = [];
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of text.split(/\r\n|\r|\n/)) {
     const matches = [
       ...line.matchAll(/\[(\d+):([0-5]?\d)(?:[.:](\d{1,3}))?\]/g),
     ];

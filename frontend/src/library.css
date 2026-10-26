@@ -31,8 +31,10 @@
 }
 .library-workbench {
   margin-bottom: 24px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid var(--line);
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
 }
 .library-workbench .library-heading {
   align-items: flex-start;
@@ -45,49 +47,55 @@
   width: 17px;
   height: 17px;
 }
-.library-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 36px;
-  padding: 18px 18px 18px 36px;
-  background: var(--subtle);
-  border-radius: 10px;
+.workbench-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 20px;
+  max-width: 880px;
+  margin: 24px 0;
+}
+.workbench-options > label {
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+  min-width: 0;
+}
+.workbench-options select,
+.workbench-options input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.workbench-options small {
+  color: var(--muted);
+}
+.workbench-rule-summary {
+  color: var(--muted);
   font-size: 13px;
-  margin: 20px 0;
+  padding-block: 16px;
+  border-top: 1px solid var(--line);
 }
-.library-steps li::marker {
-  color: var(--accent);
-  font-weight: 650;
+.workbench-rule-summary p {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
 }
-.workbench-options,
+.workbench-rule-summary p:first-child {
+  color: var(--ink);
+  font-weight: 600;
+}
 .library-job-filters {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 16px 24px;
   margin: 20px 0;
 }
-.workbench-options > label:first-child {
-  display: grid;
-  gap: 8px;
-  font-size: 14px;
-}
-.workbench-options select {
-  max-width: 100%;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-.workbench-sources {
-  margin: 18px 0;
-}
-.workbench-sources > summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 14px;
-}
 .workbench-submit {
-  margin: 20px 0 12px;
+  margin: 0 0 12px;
 }
 .workbench-submit small,
 .metadata-source small {
@@ -132,10 +140,11 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
   }
-  .library-steps {
-    display: grid;
+  .workbench-options {
     grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
+  }
+  .library-workbench {
+    padding: 18px;
   }
   .workbench-options > label,
   .workbench-options select {
@@ -282,6 +291,10 @@
 }
 .nav-albums {
   margin-top: 24px;
+}
+.nav-albums .saved-playlist > .album-art {
+  height: auto;
+  aspect-ratio: 1;
 }
 .nav-album-heading {
   display: flex;
@@ -649,5 +662,99 @@
   }
   .processing-list-row > svg {
     display: none;
+  }
+}
+
+.nav-song-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 24px;
+  margin-top: 24px;
+}
+.nav-song-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.nav-song-card > .album-art {
+  width: 100%;
+  max-width: none;
+  aspect-ratio: 1;
+  height: auto;
+  margin: 0 0 6px;
+}
+.nav-song-card > strong,
+.nav-song-card > span,
+.nav-song-card > small {
+  overflow-wrap: anywhere;
+}
+.nav-song-card > span,
+.nav-song-card > small {
+  color: var(--muted);
+}
+.nav-album-list {
+  display: grid;
+  margin-top: 20px;
+}
+.nav-album-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 2fr) minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 4px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.nav-album-row .album-art {
+  width: 48px;
+  height: 48px;
+  margin: 0;
+}
+.nav-album-row strong,
+.nav-album-row span {
+  overflow-wrap: anywhere;
+}
+.nav-album-row span,
+.nav-album-row small {
+  color: var(--muted);
+}
+.nav-artists-list {
+  grid-template-columns: minmax(0, 1fr);
+}
+.nav-artists-list .nav-artist {
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+}
+.navidrome-library .library-modes [aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink);
+}
+@media (max-width: 600px) {
+  .navidrome-library .library-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .navidrome-library .library-heading-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .nav-song-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px 12px;
+  }
+  .nav-album-row {
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 6px 12px;
+  }
+  .nav-album-row .album-art {
+    grid-row: 1 / 4;
+    width: 44px;
+    height: 44px;
+  }
+  .nav-album-row span,
+  .nav-album-row small {
+    grid-column: 2;
   }
 }

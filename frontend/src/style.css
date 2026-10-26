@@ -1,4 +1,4 @@
-/* MusicDL 2026 Modern Clean Studio: Nordic Alabaster & Deep Ink token system */
+/* MeloDock: light and dark interface tokens. */
 :root {
   color-scheme: light;
   --ink: #0f172a;
@@ -1490,6 +1490,21 @@ tr.current {
 .full-player-controls {
   margin: 0 0 14px;
 }
+.full-player-controls .player-extras {
+  justify-content: center;
+}
+.full-player-controls .player-extras input {
+  width: min(120px, 40%);
+}
+.volume-value {
+  min-width: 4ch;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.now-transport-row .volume-value {
+  display: none;
+}
 .panel-content {
   flex: 1;
   min-height: 0;
@@ -1678,10 +1693,21 @@ tr.current {
   margin: 14px 0;
 }
 .album-actions {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
   gap: 8px;
-  flex-wrap: wrap;
+}
+.album-actions button {
+  min-width: 0;
+  padding: 10px 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.album-actions button svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
 }
 .album-queue {
   min-width: 0;
@@ -1733,6 +1759,11 @@ tr.current {
   background: var(--ink);
   color: var(--surface);
 }
+.lyric-follow:disabled {
+  background: var(--subtle);
+  color: var(--muted);
+  cursor: default;
+}
 .full-lyrics {
   height: clamp(440px, calc(100dvh - 300px), 760px);
   overflow: auto;
@@ -1770,12 +1801,25 @@ tr.current {
 }
 .full-lyrics .lyric-empty {
   text-align: center;
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 2.3;
+  overflow-wrap: anywhere;
+  max-width: 36em;
+  margin: 0 auto;
+  padding: 12px 8px;
+}
+.full-lyrics.untimed {
+  padding: 24px 0;
+  mask-image: none;
+  -webkit-mask-image: none;
 }
 .full-lyrics button.active {
   color: var(--ink);
   font-weight: 700;
 }
-.full-lyrics.large button {
+.full-lyrics.large button,
+.full-lyrics.large .lyric-empty {
   font-size: 28px;
 }
 .lyric-time {
@@ -3282,10 +3326,14 @@ dialog::backdrop {
     padding: 8px 6px;
     line-height: 1.5;
   }
+  .full-lyrics .lyric-empty {
+    font-size: 18px;
+  }
   .full-lyrics button.active {
     font-size: 18px;
   }
-  .full-lyrics.large button {
+  .full-lyrics.large button,
+  .full-lyrics.large .lyric-empty {
     font-size: 20px;
   }
   .full-player-controls {
@@ -3660,10 +3708,14 @@ dialog::backdrop {
     text-align: center;
     justify-content: center;
   }
+  .full-lyrics .lyric-empty {
+    font-size: 17px;
+  }
   .full-lyrics button.active {
     font-size: 17px;
   }
-  .full-lyrics.large button {
+  .full-lyrics.large button,
+  .full-lyrics.large .lyric-empty {
     font-size: 19px;
   }
   .lyric-time {
@@ -3962,13 +4014,13 @@ dialog::backdrop {
   text-align: center;
   padding: 12px 3px;
 }
-.track-action button {
+.track-action :is(button, a) {
   margin: auto;
   width: 32px;
   height: 32px;
   border-radius: 9px;
 }
-.track-action button span {
+.track-action :is(button, a) span {
   display: none;
 }
 .track-table .track-size {
@@ -4229,7 +4281,7 @@ dialog::backdrop {
   .track-table .track-action:nth-child(11) {
     grid-column: 1 / -1;
   }
-  .track-table .track-action button {
+  .track-table .track-action :is(button, a) {
     width: 100%;
     height: 44px;
     border-radius: 9px;
@@ -4245,23 +4297,23 @@ dialog::backdrop {
     font-weight: 500;
     white-space: nowrap;
   }
-  .track-table .track-action button:hover {
+  .track-table .track-action :is(button, a):hover {
     background: var(--hover);
     color: var(--ink);
   }
-  .track-table .track-action button.favorite.on {
+  .track-table .track-action :is(button, a).favorite.on {
     color: #f43f5e;
     background: rgba(244, 63, 94, 0.1);
     border-color: rgba(244, 63, 94, 0.2);
   }
-  .track-table .track-action button.row-play:hover,
-  .track-table .track-action button.row-play:active,
-  .track-table tr.current .track-action button.row-play {
+  .track-table .track-action :is(button, a).row-play:hover,
+  .track-table .track-action :is(button, a).row-play:active,
+  .track-table tr.current .track-action :is(button, a).row-play {
     background: var(--ink);
     color: var(--surface);
     border-color: var(--ink);
   }
-  .track-action button span {
+  .track-action :is(button, a) span {
     display: inline;
   }
   .track-action svg {
@@ -4291,4 +4343,68 @@ dialog::backdrop {
   .source-picker {
     grid-template-columns: 1fr;
   }
+}
+
+.nav-order-toggle {
+  flex: none;
+}
+.navigation-order {
+  position: fixed;
+  inset: 76px 28px auto auto;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100dvh - 100px);
+  box-sizing: border-box;
+  margin: 0;
+  padding: 18px;
+  overflow-y: auto;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.navigation-order::backdrop {
+  background: transparent;
+}
+.navigation-order-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.navigation-order p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 8px 0 14px;
+}
+.navigation-order ol {
+  padding: 0;
+  margin: 0 0 14px;
+  list-style: none;
+}
+.navigation-order li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+.navigation-order li > span {
+  flex: 1;
+}
+.navigation-order svg {
+  width: 16px;
+  height: 16px;
+}
+@media (max-width: 900px) {
+  .nav-order-toggle {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+@media (max-width: 600px) {
+  .navigation-order {
+    inset: 104px 16px auto auto;
+  }
+}
+
+.track-action a {
+  text-decoration: none;
 }

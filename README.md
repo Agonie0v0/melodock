@@ -1,9 +1,11 @@
-# musicdl
+# MeloDock
 
-**面向 NAS 与自托管场景的音乐搜索、在线试听、歌单管理与批量下载中心。**  
+**面向 NAS 与自托管场景的音乐搜索、播放、歌单、刮削整理与音乐库管理中心。**
 支持桌面端与移动端自适应界面，支持在线播放、同步歌词、断点续传下载与本地曲库管理，原生集成 **Telegram 2000 MB 本地大文件直传** 与企业微信交互式下载。
 
 [NAS / Docker 部署](#nas--docker-快速部署) · [网页配置指南](#网页配置指南) · [Telegram 2000MB 大文件直传](#telegram-local-bot-api-server2000-mb-大文件直传) · [环境变量与权限](#环境变量与-nas-目录权限) · [进阶文档](docs/configuration.md)
+
+原项目名为 **musicdl**，现更名为 **MeloDock**，仓库为 [Agonie0v0/melodock](https://github.com/Agonie0v0/melodock)。新部署使用 `MELODOCK_*` 环境变量和 `melodock.db`；已有部署兼容原 `MUSICDL_*` 配置，继续读取原 `musicdl.db`、音乐目录及处理备份，浏览器偏好自动迁移，无需手动搬动数据。同一配置的新旧变量同时存在时，以 `MELODOCK_*` 为准。底层 [musicdl 引擎](https://github.com/CharlesPikachu/musicdl)的包名和许可保持不变。
 
 ---
 
@@ -24,27 +26,29 @@
 - **统一代理路由**
   - 在网页配置一次 HTTP / HTTPS 代理地址，即可分别控制搜索请求与 Telegram 机器人是否使用代理。
 - **下载后刮削、整理与 Navidrome**
-  - 独立「刮削整理」工作台，选曲后配置本次来源、预览标签及路径，审核后应用；支持任务筛选与原文件恢复。
+  - 独立「刮削整理」工作台，选曲并指定处理操作、预览标签及路径，来源与默认规则统一在设置中管理，审核后应用；支持任务筛选与原文件恢复。
   - 网易云、QQ、咪咕、酷狗、酷我、MusicBrainz 与 AcoustID 指纹资料来源，展示各自的字段与限制；支持下载后处理和目录监控。
   - 批量标签/重命名表达式、文件名提取、繁简转换、歌词/封面导入导出、艺术家图片、音频去重、完整性检查、转码及 CUE 分轨。
   - 先预览再写入，保存单曲和批量修改版本，可恢复原件并导出处理报告；详见 [V2 刮削整理功能对照](docs/v2-scraping.md)。
-  - 浏览、搜索与播放 Navidrome 的专辑和歌曲，整理后可触发服务器扫描。无需部署 Music Tag 服务，见 [音乐库使用说明](docs/music-library.md)。
+  - 自动同步 Navidrome 歌单；支持歌曲、专辑和歌手浏览，卡片与列表切换，整理后可触发服务器扫描。无需部署 Music Tag 服务，见 [音乐库使用说明](docs/music-library.md)。
 
 ---
 
 ## NAS / Docker 快速部署
 
-镜像托管于 GitHub Container Registry（`ghcr.io/agonie0v0/musicdl:latest`），原生支持 **`linux/amd64`**（群晖、威联通、飞牛 fnOS、Unraid、软路由、x86 服务器）与 **`linux/arm64`**（ARM NAS、树莓派、Apple Silicon），已内置 `FFmpeg` 与官方 `telegram-bot-api`。
+镜像托管于 GitHub Container Registry（`ghcr.io/agonie0v0/melodock:latest`），原生支持 **`linux/amd64`**（群晖、威联通、飞牛 fnOS、Unraid、软路由、x86 服务器）与 **`linux/arm64`**（ARM NAS、树莓派、Apple Silicon），已内置 `FFmpeg` 与官方 `telegram-bot-api`。
+
+旧镜像地址 `ghcr.io/agonie0v0/musicdl:latest` 继续发布同一版本，已有部署可以直接拉取更新。改用新镜像地址时，只需修改现有 Compose 的 `image`，保留原服务名、容器名及挂载目录；下方是新部署示例。飞书或钉钉若配置了关键词校验，请将允许关键词更新为 `MeloDock`。
 
 ### 1. 创建 `docker-compose.yml`
 
-在 NAS 或服务器上新建部署目录（例如 `/volume1/docker/musicdl` 或 `/opt/musicdl`），保存以下 `docker-compose.yml` 并修改 `MUSICDL_PASS` 登录密码：
+在 NAS 或服务器上新建部署目录（例如 `/volume1/docker/melodock` 或 `/opt/melodock`），保存以下 `docker-compose.yml` 并修改 `MELODOCK_PASS` 登录密码：
 
 ```yaml
 services:
-  musicdl-webui:
-    container_name: musicdl
-    image: ghcr.io/agonie0v0/musicdl:latest
+  melodock-webui:
+    container_name: melodock
+    image: ghcr.io/agonie0v0/melodock:latest
     restart: unless-stopped
     init: true
     ports:
@@ -53,8 +57,8 @@ services:
       - ./music:/music
       - ./data:/data
     environment:
-      MUSICDL_USER: admin
-      MUSICDL_PASS: '请改成你自己的强密码'
+      MELODOCK_USER: admin
+      MELODOCK_PASS: '请改成你自己的强密码'
       # 如 NAS 共享目录要求指定读写用户的 UID/GID，取消下方注释并修改（可在 SSH 执行 id 用户名 查看）：
       # PUID: '1000'
       # PGID: '1000'
@@ -74,7 +78,7 @@ docker compose up -d
 | 挂载目录 | 容器内路径 | 持久化内容（升级镜像时请保留） |
 | --- | --- | --- |
 | `./music` | `/music` | 下载完成的音频文件与同名 `.lrc` 歌词 |
-| `./data` | `/data` | `config.json` 配置、`musicdl.db` 数据库（歌单/收藏/下载队列）、Telegram 本地服务数据 |
+| `./data` | `/data` | `config.json` 配置、`melodock.db` 数据库（旧部署继续使用 `musicdl.db`；保存歌单/收藏/下载队列）、Telegram 本地服务数据 |
 
 **日常拉取最新镜像并平滑升级：**
 
@@ -125,12 +129,12 @@ Telegram 官方云端 Bot API 的单文件上传上限为 **50 MB**。
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `MUSICDL_USER` / `MUSICDL_PASS` | 无（Docker 必填） | Web 登录账号与密码，非本机回环访问时必须同时设置 |
+| `MELODOCK_USER` / `MELODOCK_PASS` | 无（Docker 必填） | Web 登录账号与密码，非本机回环访问时必须同时设置 |
 | `PUID` / `PGID` | `10001` / `10001` | 容器内运行进程的 UID / GID，适配群晖、威联通、飞牛等 NAS 共享目录权限 |
-| `MUSICDL_COOKIE_SECURE` | `0` | HTTP 访问保持 `0`；若仅通过 HTTPS 反向代理访问可设为 `1` |
-| `MUSICDL_MAX_DOWNLOAD_TASKS` | `2` | 同时进行的下载任务并发数（`1` ~ `4`） |
-| `MUSICDL_SEARCH_WORKERS` | `4` | 并行搜索子进程上限（`1` ~ `6`，低内存 NAS 可设为 `2`） |
-| `MUSICDL_SEARCH_BUDGET` | `120` | 单次搜索总超时预算（秒） |
+| `MELODOCK_COOKIE_SECURE` | `0` | HTTP 访问保持 `0`；若仅通过 HTTPS 反向代理访问可设为 `1` |
+| `MELODOCK_MAX_DOWNLOAD_TASKS` | `2` | 同时进行的下载任务并发数（`1` ~ `4`） |
+| `MELODOCK_SEARCH_WORKERS` | `4` | 并行搜索子进程上限（`1` ~ `6`，低内存 NAS 可设为 `2`） |
+| `MELODOCK_SEARCH_BUDGET` | `120` | 单次搜索总超时预算（秒） |
 
 ### NAS 目录权限排障（`Permission denied`）
 - 容器启动脚本 [`docker-entrypoint.py`](docker-entrypoint.py) 默认以 root 初始化 `/data` 与 `/music` 目录权限后，自动降权切换至 `PUID:PGID`（默认 `10001:10001`）运行服务。

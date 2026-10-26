@@ -25,7 +25,10 @@ try {
   }
   browser = await chromium.launch({
     headless: true,
-    executablePath: process.env.MUSICDL_BROWSER_EXECUTABLE || undefined,
+    executablePath:
+      process.env.MELODOCK_BROWSER_EXECUTABLE ||
+      process.env.MUSICDL_BROWSER_EXECUTABLE ||
+      undefined,
   });
   const page = await browser.newPage({
       viewport: { width: 1440, height: 1000 },
@@ -319,9 +322,12 @@ try {
     ...localTrack,
     id: "navidrome-s",
     source: "navidrome",
+    source_id: "s",
     title: "远程歌曲",
     playback: { ...localTrack.playback, url: "/api/navidrome/stream/s" },
   };
+  let remoteLyrics =
+    "[00:00.000]音乐库歌词第一句\n[00:02.250]音乐库歌词第二句\n[00:05.001]音乐库歌词第三句";
   const remoteAlbum = {
     id: "album-a",
     name: "远程专辑",
@@ -335,6 +341,10 @@ try {
     cancelledSearches = [],
     searchKeywords = new Map(),
     heldSearches = new Map();
+  let remoteSyncEnabled = false;
+  let remoteSyncFails = false;
+  let remotePlaylistName = "Navidrome 测试歌单";
+  let songOffsets = [];
   await page.route("**/api/**", async (route) => {
     const request = route.request(),
       p = new URL(request.url()).pathname.replace("/api", ""),
@@ -342,7 +352,49 @@ try {
     let result;
     if (p === "/auth/status") result = { authenticated: true, required: false };
     else if (p === "/auth/logout") result = { success: true };
-    else if (p === "/library/settings") {
+    else if (p === "/navidrome/playlists") {
+      if (remoteSyncFails) {
+        await route.fulfill({
+          status: 502,
+          json: { detail: "远程连接暂时失败" },
+        });
+        return;
+      }
+      result = remoteSyncEnabled
+        ? [
+            {
+              id: "navidrome:p1",
+              name: remotePlaylistName,
+              source: "navidrome",
+              read_only: true,
+              source_url: "",
+              created_at: 1792700000,
+              track_count: 1,
+              issue_count: 0,
+              cover: null,
+              detail: "自动同步",
+              task_id: "",
+            },
+          ]
+        : [];
+    } else if (p === "/navidrome/playlists/p1") {
+      result = {
+        id: "navidrome:p1",
+        name: remotePlaylistName,
+        source: "navidrome",
+        read_only: true,
+        source_url: "",
+        created_at: 1792700000,
+        tracks: [remoteTrack],
+        issues: [],
+        detail: "自动同步",
+        task_id: "",
+      };
+    } else if (p === "/navidrome/songs") {
+      const offset = Number(new URL(request.url()).searchParams.get("offset"));
+      songOffsets.push(offset);
+      result = { tracks: [remoteTrack], has_more: offset === 0 };
+    } else if (p === "/library/settings") {
       if (method === "PUT")
         libraryConfig = { ...libraryConfig, ...request.postDataJSON() };
       result = libraryConfig;
@@ -399,7 +451,9 @@ try {
               before,
               after: { ...before, ...body.changes },
               status: "ready",
-              candidates: body.sources
+              candidates: (body.sources || libraryConfig.sources).includes(
+                "musicbrainz",
+              )
                 ? [
                     {
                       id: "mb-fixture",
@@ -414,7 +468,11 @@ try {
                     },
                   ]
                 : [],
-              chosen: body.sources ? "mb-fixture" : null,
+              chosen: (body.sources || libraryConfig.sources).includes(
+                "musicbrainz",
+              )
+                ? "mb-fixture"
+                : null,
               locks: [],
               warnings: [],
               ...(["convert", "split"].includes(body.action)
@@ -665,11 +723,19 @@ try {
       return;
     } else if (p.endsWith("/lyrics"))
       result = {
-        text: "[00:00.00]测试歌词第一句\n[00:02.00]测试歌词第二句\n[00:05.00]测试歌词第三句",
+        text: p.includes("navidrome-s")
+          ? remoteLyrics
+          : p.includes("local-fixture")
+            ? "[00:00.000]本地歌词第一句\r[00:02.250]本地歌词第二句\r[00:05.001]本地歌词第三句"
+            : "[00:00.00]测试歌词第一句\n[00:02.00]测试歌词第二句\n[00:05.00]测试歌词第三句",
       };
     else if (p.endsWith("/playback") || p.endsWith("/versions")) {
       if (p.endsWith("/versions")) versionRequests++;
-      result = p.includes("local-fixture") ? localTrack : track;
+      result = p.includes("local-fixture")
+        ? localTrack
+        : p.includes("navidrome-s")
+          ? remoteTrack
+          : track;
     } else if (
       p.startsWith("/stream/") ||
       p.startsWith("/navidrome/stream/") ||
@@ -740,7 +806,22 @@ try {
         .click();
     if (tab) await page.getByRole("tab", { name: tab, exact: true }).click();
   };
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("rebrand-migration-seeded")) return;
+    localStorage.setItem("musicdl-theme", "system");
+    localStorage.setItem("musicdl-navidrome-layout", "list");
+    sessionStorage.setItem("rebrand-migration-seeded", "1");
+  });
   await page.goto(base);
+  await expect(page).toHaveTitle("MeloDock");
+  assert.deepEqual(
+    await page.evaluate(() => [
+      localStorage.getItem("melodock-theme"),
+      localStorage.getItem("musicdl-theme"),
+      localStorage.getItem("melodock-navidrome-layout"),
+    ]),
+    ["system", null, "list"],
+  );
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForFunction(
     () => document.documentElement.dataset.theme === "dark",
@@ -751,6 +832,32 @@ try {
   );
   await mkdir("../output", { recursive: true });
   const sidebar = page.locator(".sidebar");
+  await page.getByRole("button", { name: "调整导航顺序", exact: true }).click();
+  await page.getByRole("button", { name: "前移音乐库", exact: true }).click();
+  await expect(
+    page.locator('nav[aria-label="主导航"] .nav-item').nth(3),
+  ).toHaveText("音乐库");
+  await page.getByRole("button", { name: "关闭导航排序", exact: true }).click();
+  await page.reload();
+  await expect(
+    page.locator('nav[aria-label="主导航"] .nav-item').nth(3),
+  ).toHaveText("音乐库");
+  await page
+    .getByRole("button", { name: "音乐库", exact: true })
+    .dragTo(page.getByRole("button", { name: "搜索音乐", exact: true }));
+  await expect(
+    page.locator('nav[aria-label="主导航"] .nav-item').first(),
+  ).toHaveText("音乐库");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "调整导航顺序", exact: true }).click();
+  await page.getByRole("button", { name: "后移音乐库", exact: true }).click();
+  await page.screenshot({
+    path: "../output/test-ui-navigation-order-mobile.png",
+  });
+  await page.getByRole("button", { name: "恢复默认顺序", exact: true }).click();
+  await page.getByRole("button", { name: "关闭导航排序", exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
   await expect(
     sidebar.getByRole("button", { name: "歌单导入", exact: true }),
   ).toHaveCount(0);
@@ -816,7 +923,7 @@ try {
       path: `../output/test-ui-grouped-processing-${width}.png`,
     });
     await page
-      .getByRole("button", { name: "默认规则设置", exact: true })
+      .getByRole("button", { name: "前往规则设置", exact: true })
       .click();
     await expect(page.getByRole("tab")).toHaveText([
       "音源与下载",
@@ -968,6 +1075,52 @@ try {
     return image?.naturalWidth > 0 && image.style.display !== "none";
   });
   await page.getByRole("button", { name: "正在播放", exact: true }).click();
+  const fullVolume = page
+    .locator(".full-player-controls")
+    .getByRole("slider", { name: "音量", exact: true });
+  await expect(fullVolume).toBeVisible();
+  await fullVolume.fill("0.32");
+  await expect
+    .poll(() => page.locator("audio").evaluate((a) => a.volume))
+    .toBe(0.32);
+  await page
+    .locator(".full-player-controls")
+    .getByLabel("静音", { exact: true })
+    .click();
+  await expect
+    .poll(() => page.locator("audio").evaluate((a) => a.volume))
+    .toBe(0);
+  await page
+    .locator(".full-player-controls")
+    .getByLabel("取消静音", { exact: true })
+    .click();
+  await expect
+    .poll(() => page.locator("audio").evaluate((a) => a.volume))
+    .toBe(0.65);
+  const controlsBox = await page.locator(".full-player-controls").boundingBox();
+  const actionBoxes = await Promise.all(
+    (await page.locator(".album-actions button").all()).map((b) =>
+      b.boundingBox(),
+    ),
+  );
+  assert.ok(
+    Math.abs(actionBoxes[0].x - controlsBox.x) < 1 &&
+      Math.abs(
+        actionBoxes[2].x +
+          actionBoxes[2].width -
+          controlsBox.x -
+          controlsBox.width,
+      ) < 1,
+    "player actions align with both edges of the controls",
+  );
+  assert.ok(
+    actionBoxes.every(
+      (box) =>
+        Math.abs(box.width - actionBoxes[0].width) < 1 &&
+        Math.abs(box.y - actionBoxes[0].y) < 1,
+    ),
+    "player actions form one row of equal-width buttons",
+  );
   await page.getByLabel("切换随机播放", { exact: true }).click();
   assert.ok(
     await page
@@ -1109,6 +1262,14 @@ try {
       .locator("audio")
       .evaluate((audio) => audio.src.includes("/files/audio")),
   );
+  await page.getByRole("button", { name: "正在播放", exact: true }).click();
+  await expect(page.locator(".full-lyrics button")).toHaveCount(3);
+  await page.locator(".full-lyrics button").nth(1).click();
+  await expect(page.locator(".full-lyrics button.active")).toContainText(
+    "本地歌词第二句",
+  );
+  await page.screenshot({ path: "../output/test-ui-player-local-lyrics.png" });
+  await page.getByRole("button", { name: "音乐库", exact: true }).click();
   await expect(page.getByRole("tab")).toHaveText(["本地音乐", "Navidrome"]);
   await expect(page.getByLabel("更多音乐管理操作")).toHaveCount(0);
   await expect(
@@ -1232,7 +1393,7 @@ try {
   ).toBeDisabled();
   await page.getByLabel("搜索音乐文件", { exact: true }).fill("");
   await page.getByLabel("全选音乐文件").check();
-  await page.locator(".workbench-sources summary").click();
+  await page.getByRole("button", { name: "前往规则设置", exact: true }).click();
   await page.getByLabel("MusicBrainz", { exact: true }).check();
   await page
     .locator(".metadata-source")
@@ -1244,9 +1405,38 @@ try {
     .filter({ hasText: "QQ音乐" })
     .getByRole("checkbox")
     .uncheck();
+  await page.getByText("字段与覆盖规则", { exact: true }).click();
   await page
-    .getByLabel("覆盖已有标签（手动锁定字段始终保留）", { exact: true })
+    .getByLabel("覆盖已有标签（关闭时只补空值，手动锁定的字段始终保留）", {
+      exact: true,
+    })
     .check();
+  await page.getByRole("button", { name: "保存曲库设置", exact: true }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "曲库设置已保存" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "刮削整理", exact: true }).click();
+  await expect(
+    page.locator(".library-workbench .metadata-sources"),
+  ).toHaveCount(0);
+  await expect(
+    page.locator(".library-workbench input[type=checkbox]"),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("当前处理规则")).toContainText("MusicBrainz");
+  const controls = await page
+    .locator(".workbench-options select")
+    .evaluateAll((items) =>
+      items.map((item) => {
+        const r = item.getBoundingClientRect();
+        return { top: r.top, height: r.height };
+      }),
+    );
+  assert.equal(controls.length, 2);
+  assert.ok(
+    Math.abs(controls[0].top - controls[1].top) <= 1 &&
+      Math.abs(controls[0].height - controls[1].height) <= 1,
+    "workbench controls align",
+  );
   await page.screenshot({
     path: "../output/test-ui-workbench.png",
     fullPage: true,
@@ -1273,11 +1463,11 @@ try {
   await expect(page.getByText(/补充资料来源：/)).toContainText(
     "歌词（QQ音乐）",
   );
-  assert.deepEqual(lastLibraryBody.sources, ["musicbrainz"]);
+  assert.equal(lastLibraryBody.sources, undefined);
   assert.deepEqual(lastLibraryBody.paths, ["fixture-a.wav"]);
-  assert.equal(lastLibraryBody.overwrite, true);
+  assert.equal(lastLibraryBody.overwrite, undefined);
   assert.equal(libraryJobs[0].status, "ready");
-  assert.deepEqual(libraryConfig.sources, ["netease", "qq"]);
+  assert.deepEqual(libraryConfig.sources, ["musicbrainz"]);
   await page.getByRole("button", { name: "全部任务", exact: true }).click();
   await page.getByRole("button", { name: "待确认", exact: true }).click();
   await expect(
@@ -1391,12 +1581,123 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "音乐库", exact: true }).click();
   await page.getByRole("tab", { name: "Navidrome", exact: true }).click();
+  await page.getByRole("button", { name: "全部歌曲", exact: true }).click();
+  await expect(page.locator(".navidrome-library .music-table")).toContainText(
+    "远程歌曲",
+  );
+  await page.getByRole("button", { name: "下一页", exact: true }).click();
+  await expect(page.getByText("第 2 页", { exact: true })).toBeVisible();
+  assert.ok(songOffsets.includes(50));
+  await page.getByRole("button", { name: "上一页", exact: true }).click();
+  await page.getByRole("button", { name: "卡片显示", exact: true }).click();
+  await expect(page.locator(".nav-song-card")).toHaveCount(1);
+  await page.screenshot({
+    path: "../output/test-ui-navidrome-songs-cards.png",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  const songCover = await page
+    .locator(".nav-song-card > .album-art")
+    .boundingBox();
+  assert.ok(
+    songCover.width >= 120 && Math.abs(songCover.width - songCover.height) <= 1,
+    "mobile song cards keep full square covers",
+  );
+  await page.screenshot({
+    path: "../output/test-ui-navidrome-songs-cards-mobile.png",
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "专辑", exact: true }).click();
+  await page.getByRole("button", { name: "列表显示", exact: true }).click();
+  await expect(page.locator(".nav-album-row")).toHaveCount(1);
+  await page.getByRole("button", { name: "卡片显示", exact: true }).click();
+
   await expect(
     page.getByRole("button", { name: "远程专辑", exact: false }),
   ).toBeVisible();
   await page.screenshot({ path: "../output/test-ui-navidrome-albums.png" });
   await page.getByRole("button", { name: "远程专辑", exact: false }).click();
   await expect(page.locator(".nav-album-heading")).toContainText("远程专辑");
+  await page.getByLabel("播放 远程歌曲", { exact: true }).click();
+  await page.getByRole("button", { name: "正在播放", exact: true }).click();
+  await expect(page.locator(".full-player .album-info")).toContainText(
+    "远程歌曲",
+  );
+  await expect(page.locator(".full-lyrics button")).toHaveCount(3);
+  await page.locator(".full-lyrics button").nth(1).click();
+  await expect(page.locator(".full-lyrics button.active")).toContainText(
+    "音乐库歌词第二句",
+  );
+  await page.waitForFunction(() => {
+    const container = document
+      .querySelector(".full-lyrics")
+      .getBoundingClientRect();
+    const active = document
+      .querySelector(".full-lyrics button.active")
+      .getBoundingClientRect();
+    return (
+      Math.abs(
+        active.y + active.height / 2 - container.y - container.height / 2,
+      ) < 12
+    );
+  });
+  await page.screenshot({
+    path: "../output/test-ui-player-navidrome-lyrics.png",
+  });
+  await page.getByRole("button", { name: "音乐库", exact: true }).click();
+  remoteLyrics = Array.from(
+    { length: 16 },
+    (_, i) => `没有时间轴的歌词 第 ${i + 1} 行`,
+  ).join("\n");
+  await page.getByRole("button", { name: "远程专辑", exact: false }).click();
+  await page.getByLabel("播放 远程歌曲", { exact: true }).click();
+  await page.getByRole("button", { name: "正在播放", exact: true }).click();
+  const plainLyrics = page.locator(".full-lyrics .lyric-empty");
+  await expect(plainLyrics).toContainText("没有时间轴的歌词");
+  await expect(
+    page.getByRole("button", { name: "跟随进度", exact: true }),
+  ).toBeDisabled();
+  const plainSize = await plainLyrics.evaluate((e) =>
+    parseFloat(getComputedStyle(e).fontSize),
+  );
+  assert.ok(plainSize >= 21);
+  await page.getByLabel("调整歌词字号").click();
+  assert.notEqual(
+    await plainLyrics.evaluate((e) => parseFloat(getComputedStyle(e).fontSize)),
+    plainSize,
+  );
+  assert.equal(
+    await page.locator(".full-lyrics").evaluate((e) => e.scrollTop),
+    0,
+  );
+  await page.screenshot({ path: "../output/test-ui-player-plain-lyrics.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page
+      .locator(".full-player-controls")
+      .getByRole("slider", { name: "音量", exact: true }),
+  ).toBeVisible();
+  assert.ok(
+    (await plainLyrics.evaluate((e) =>
+      parseFloat(getComputedStyle(e).fontSize),
+    )) >= 17,
+  );
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.screenshot({
+    path: "../output/test-ui-player-plain-lyrics-mobile.png",
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  remoteLyrics = "[00:00]音乐库歌词第一句\n[00:02]音乐库歌词第二句";
+  await page.getByRole("button", { name: "音乐库", exact: true }).click();
+  await page.getByRole("button", { name: "远程专辑", exact: false }).click();
   await page.getByLabel("加入待播 远程歌曲", { exact: true }).click();
   await expect
     .poll(() => playlist.some((item) => item.id === "navidrome-s"))
@@ -1609,7 +1910,7 @@ try {
   await expect(
     page.getByRole("button", { name: "生成修改预览", exact: true }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "默认规则设置", exact: true }).click();
+  await page.getByRole("button", { name: "前往规则设置", exact: true }).click();
   await expect(page.locator(".sidebar .nav-item.active")).toHaveText("设置");
   await expect(page.getByRole("tab", { selected: true })).toHaveText(
     "刮削与归档",
@@ -1987,6 +2288,46 @@ try {
   await page.getByRole("button", { name: "确认删除", exact: true }).click();
   await expect(page.locator(".saved-playlist")).toHaveCount(0);
   await expect(page.locator(".library-empty")).toBeVisible();
+  remoteSyncEnabled = true;
+  await page.getByRole("button", { name: "歌单", exact: true }).click();
+  await expect(
+    page.locator(".saved-playlist").filter({ hasText: remotePlaylistName }),
+  ).toBeVisible();
+  await page
+    .locator(".saved-playlist")
+    .filter({ hasText: remotePlaylistName })
+    .click();
+  await expect(page.locator(".playlist-heading h2")).toHaveText(
+    remotePlaylistName,
+  );
+  await expect(
+    page.getByRole("link", { name: "下载 远程歌曲", exact: true }),
+  ).toHaveAttribute("href", "/api/navidrome/stream/s");
+  await page.screenshot({ path: "../output/test-ui-navidrome-playlist.png" });
+
+  await expect(
+    page.getByRole("button", { name: "删除歌单", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByLabel("移出歌单 远程歌曲", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "播放全部", exact: true }).click();
+  await expect.poll(() => playlist[0]?.id).toBe("navidrome-s");
+  remotePlaylistName = "服务器已更新的歌单";
+  await page.getByRole("button", { name: "同步歌单", exact: true }).click();
+  await expect(page.locator(".playlist-heading h2")).toHaveText(
+    remotePlaylistName,
+  );
+  await page.getByRole("button", { name: "所有歌单", exact: true }).click();
+  remoteSyncFails = true;
+  await page.getByRole("button", { name: "同步歌单", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("远程连接暂时失败");
+  await expect(
+    page.locator(".saved-playlist").filter({ hasText: remotePlaylistName }),
+  ).toBeVisible();
+  remoteSyncFails = false;
+  await page.getByRole("button", { name: "同步歌单", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await openSettings("通知与机器人");
   await expect(
     page.getByRole("button", { name: "测试 Telegram 连接", exact: true }),
@@ -2115,7 +2456,7 @@ try {
     await expect(projectLink).toBeVisible();
     await expect(projectLink).toHaveAttribute(
       "href",
-      "https://github.com/Agonie0v0/musicdl",
+      "https://github.com/Agonie0v0/melodock",
     );
     await expect(projectLink).toHaveAttribute("target", "_blank");
     const navButtons = page.locator(".sidebar-capsules .nav-item");

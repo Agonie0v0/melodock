@@ -1,9 +1,10 @@
-"""Prepare bind-mounted storage, then run the application as musicdl."""
+"""Prepare bind-mounted storage, then run MeloDock as the configured UID/GID."""
 import os
 from pathlib import Path
 import stat
 import sys
 import tempfile
+from runtime_config import apply_environment_aliases
 
 
 def runtime_ids():
@@ -42,6 +43,7 @@ def check_writable(directory):
 
 
 def main():
+    apply_environment_aliases()
     data = Path(os.environ.get('MUSICDL_DATA_DIR', '/data'))
     music = Path(os.environ.get('MUSICDL_FILE_ROOT') or os.environ.get('MUSICDL_DOWNLOAD_DIR', '/music'))
     if os.environ.get('HOME') == '/data/home':

@@ -178,6 +178,7 @@ def write_metadata(path, changes, *, lyrics=None, cover=None, clear_all=False):
         if lyrics is not None:
             if isinstance(audio.tags, ID3):
                 audio.tags.delall('USLT')
+                audio.tags.delall('SYLT')
                 if lyrics:
                     audio.tags.add(USLT(encoding=3, lang='eng', desc='', text=lyrics))
             else:
@@ -223,6 +224,11 @@ def read_lyrics(path, *, prefer_sidecar=True):
     if audio is None:
         return ''
     if isinstance(audio.tags, ID3):
+        for frame in audio.tags.getall('SYLT'):
+            # Format 2 stores milliseconds; MPEG-frame timestamps need a decoder.
+            if frame.format == 2 and frame.type == 1 and frame.text:
+                return '\n'.join(f'[{timestamp // 60000:02}:{timestamp // 1000 % 60:02}.{timestamp % 1000:03}]{text}'
+                                 for text, timestamp in frame.text)
         frames = audio.tags.getall('USLT')
         return str(frames[0].text) if frames else ''
     return text_tag(audio.tags, '\xa9lyr' if isinstance(audio, MP4) else 'WM/Lyrics' if isinstance(audio, ASF) else 'lyrics')

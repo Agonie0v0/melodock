@@ -174,6 +174,7 @@ export interface PlaylistIssue {
   reason: string;
 }
 export interface SavedPlaylist {
+  read_only?: boolean;
   id: string;
   name: string;
   source: string;

@@ -1,5 +1,6 @@
 import { Cover, Button, Lyrics, Modal } from "./components";
 import { SettingsWorkspace, type SettingsTab } from "./SettingsWorkspace";
+import { Navigation } from "./Navigation";
 import { RuntimeLogs } from "./RuntimeLogs";
 import { LibraryWorkspace } from "./LibraryWorkspace";
 import { processingLabels } from "./LibrarySettings";
@@ -11,15 +12,13 @@ import {
   Music2,
   ListMusic,
   Download,
-  Folder,
-  WandSparkles,
-  Settings,
   Heart,
   Play,
   Pause,
   SkipBack,
   SkipForward,
   Volume2,
+  VolumeX,
   Expand,
   Plus,
   X,
@@ -30,7 +29,6 @@ import {
   Repeat,
   LogOut,
   History,
-  ScrollText,
   Trash2,
   Github,
   Eye,
@@ -79,7 +77,7 @@ const bytes = (n: number) =>
 export function App() {
   const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
     try {
-      const saved = localStorage.getItem("musicdl-theme");
+      const saved = localStorage.getItem("melodock-theme");
       return saved === "light" || saved === "dark" ? saved : "system";
     } catch {
       return "system";
@@ -88,7 +86,7 @@ export function App() {
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
       const saved: unknown = JSON.parse(
-        localStorage.getItem("musicdl-searches") || "[]",
+        localStorage.getItem("melodock-searches") || "[]",
       );
       return Array.isArray(saved)
         ? saved.filter((v): v is string => typeof v === "string").slice(0, 8)
@@ -106,7 +104,7 @@ export function App() {
     };
     update();
     try {
-      localStorage.setItem("musicdl-theme", theme);
+      localStorage.setItem("melodock-theme", theme);
     } catch {
       /* Storage is optional. */
     }
@@ -132,6 +130,10 @@ export function App() {
   const [savedPlaylists, setSavedPlaylists] = useState<PlaylistSummary[]>([]),
     [activePlaylist, setActivePlaylist] = useState<SavedPlaylist | null>(null),
     [importName, setImportName] = useState("");
+  const [remotePlaylists, setRemotePlaylists] = useState<PlaylistSummary[]>([]);
+  const [remotePlaylistError, setRemotePlaylistError] = useState("");
+  const [playlistRefresh, setPlaylistRefresh] = useState(0);
+  const allPlaylists = [...savedPlaylists, ...remotePlaylists];
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [libraryTab, setLibraryTab] = useState("local");
@@ -241,7 +243,7 @@ export function App() {
   }
   useEffect(() => {
     const login = () => setLoginRequired(true);
-    window.addEventListener("musicdl-login", login);
+    window.addEventListener("melodock-login", login);
     api<{ authenticated: boolean }>("/auth/status")
       .then((status) => {
         if (status.authenticated) load().catch(fail);
@@ -249,7 +251,7 @@ export function App() {
       })
       .catch(fail);
     return () => {
-      window.removeEventListener("musicdl-login", login);
+      window.removeEventListener("melodock-login", login);
       eventSource.current?.close();
       if (searchJob.current)
         void api(`/search/jobs/${searchJob.current}`, "DELETE").catch(() => {});
@@ -617,6 +619,10 @@ export function App() {
     }
   }
   async function chooseDownload(items: Track[]) {
+    if (items.some((track) => track.source === "navidrome")) {
+      setNotice("Navidrome 已提供原文件，可通过曲目旁的下载按钮保存到本机。");
+      return;
+    }
     if (items.some((track) => track.source === "local")) {
       setNotice("歌曲已在音乐库中，可在音乐文件页下载到本机");
       return;
@@ -720,6 +726,54 @@ export function App() {
   async function refreshPlaylists() {
     setSavedPlaylists(await api<PlaylistSummary[]>("/playlists"));
   }
+  const remotePlaylistId = activePlaylist?.read_only ? activePlaylist.id : null;
+  useEffect(() => {
+    if (view !== "playlists" || loginRequired || !config) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function sync() {
+      try {
+        const lists = await api<PlaylistSummary[]>(
+          "/navidrome/playlists",
+          "GET",
+          undefined,
+          abort.signal,
+        );
+        if (!abort.signal.aborted) {
+          setRemotePlaylists(lists);
+          setRemotePlaylistError("");
+          if (remotePlaylistId) {
+            if (lists.some((list) => list.id === remotePlaylistId)) {
+              const updated = await api<SavedPlaylist>(
+                `/navidrome/playlists/${encodeURIComponent(remotePlaylistId.slice(10))}`,
+                "GET",
+                undefined,
+                abort.signal,
+              );
+              if (!abort.signal.aborted)
+                setActivePlaylist((current) =>
+                  current?.id === remotePlaylistId ? updated : current,
+                );
+            } else {
+              setActivePlaylist((current) =>
+                current?.id === remotePlaylistId ? null : current,
+              );
+            }
+          }
+        }
+      } catch (error) {
+        if (!abort.signal.aborted)
+          setRemotePlaylistError((error as Error).message);
+      } finally {
+        if (!abort.signal.aborted) timer = setTimeout(() => void sync(), 60000);
+      }
+    }
+    void sync();
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
+  }, [view, loginRequired, !!config, playlistRefresh, remotePlaylistId]);
   function openAddToPlaylistModal(items: Track[]) {
     if (!items.length) {
       setNotice("请先选择曲目");
@@ -765,7 +819,13 @@ export function App() {
   }
   async function openPlaylist(id: string) {
     try {
-      setActivePlaylist(await api<SavedPlaylist>(`/playlists/${id}`));
+      setActivePlaylist(
+        await api<SavedPlaylist>(
+          id.startsWith("navidrome:")
+            ? `/navidrome/playlists/${encodeURIComponent(id.slice(10))}`
+            : `/playlists/${encodeURIComponent(id)}`,
+        ),
+      );
       resetCollectionFilters();
     } catch (error) {
       fail(error);
@@ -790,7 +850,7 @@ export function App() {
     }
   }
   async function removeCollectionTrack(id: string) {
-    if (!activePlaylist) return;
+    if (!activePlaylist || activePlaylist.read_only) return;
     try {
       setActivePlaylist(
         await api<SavedPlaylist>(
@@ -950,6 +1010,34 @@ export function App() {
       follow={follow}
     />
   );
+  const volumeControl = (
+    <div className="player-extras">
+      <Button
+        label={volume ? "静音" : "取消静音"}
+        onClick={() => setVolume((v) => (v ? 0 : 0.65))}
+      >
+        {volume ? <Volume2 /> : <VolumeX />}
+      </Button>
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step=".01"
+        value={volume}
+        style={
+          {
+            "--progress": `${Math.round(volume * 100)}%`,
+          } as React.CSSProperties
+        }
+        onChange={(e) => setVolume(Number(e.target.value))}
+        aria-label="音量"
+        aria-valuetext={`${Math.round(volume * 100)}%`}
+      />
+      <span className="volume-value" aria-hidden="true">
+        {Math.round(volume * 100)}%
+      </span>
+    </div>
+  );
   const trackTable = (
     <>
       <section className="results">
@@ -1026,13 +1114,15 @@ export function App() {
               <th>播放</th>
               <th>下载</th>
               <th>加入播放列表</th>
-              {view === "playlists" && <th>移出歌单</th>}
+              {view === "playlists" && !activePlaylist?.read_only && (
+                <th>移出歌单</th>
+              )}
             </tr>
           </thead>
           <tbody>
-            {display.map((track) => (
+            {display.map((track, index) => (
               <tr
-                key={track.id}
+                key={`${track.id}:${index}`}
                 className={`${selected.has(track.id) ? "selected" : ""} ${current?.id === track.id ? "current" : ""}`}
               >
                 <td>
@@ -1080,28 +1170,34 @@ export function App() {
                     track.source}
                 </td>
                 <td className="track-versions" data-label="曲目版本">
-                  <button
-                    className="quality"
-                    aria-label={`选择 ${track.title} 下载版本`}
-                    onClick={() => chooseDownload([track])}
-                  >
-                    {track.qualities.map((q) => (
-                      <span
-                        className={`badge ${q.lossless ? "flac" : ""}`}
-                        title={
-                          q.evidence === "engine"
-                            ? "原音源解析器返回的实际版本"
-                            : `${q.availability === "login_required" ? "需要登录 · " : ""}音源标注，下载前验证`
-                        }
-                        key={q.id}
-                      >
-                        {q.label}
-                      </span>
-                    ))}
-                    {!track.qualities.length && (
-                      <span className="badge pending">音质待确认</span>
-                    )}
-                  </button>
+                  {track.source === "navidrome" ? (
+                    <span className="badge">
+                      {track.playback.codec?.toUpperCase() || "原格式"}
+                    </span>
+                  ) : (
+                    <button
+                      className="quality"
+                      aria-label={`选择 ${track.title} 下载版本`}
+                      onClick={() => chooseDownload([track])}
+                    >
+                      {track.qualities.map((q) => (
+                        <span
+                          className={`badge ${q.lossless ? "flac" : ""}`}
+                          title={
+                            q.evidence === "engine"
+                              ? "原音源解析器返回的实际版本"
+                              : `${q.availability === "login_required" ? "需要登录 · " : ""}音源标注，下载前验证`
+                          }
+                          key={q.id}
+                        >
+                          {q.label}
+                        </span>
+                      ))}
+                      {!track.qualities.length && (
+                        <span className="badge pending">音质待确认</span>
+                      )}
+                    </button>
+                  )}
                 </td>
                 <td className="track-size" data-label="大小">
                   {track.size_bytes != null
@@ -1135,15 +1231,28 @@ export function App() {
                   </button>
                 </td>
                 <td className="track-action">
-                  <button
-                    className="icon-button"
-                    aria-label={`下载 ${track.title}`}
-                    title="下载"
-                    onClick={() => chooseDownload([track])}
-                  >
-                    <Download />
-                    <span>下载</span>
-                  </button>
+                  {track.source === "navidrome" ? (
+                    <a
+                      className="icon-button"
+                      aria-label={`下载 ${track.title}`}
+                      title="下载 Navidrome 原文件"
+                      href={`/api/navidrome/stream/${encodeURIComponent(track.source_id)}`}
+                      download={`${track.title}.${track.playback.codec || "audio"}`}
+                    >
+                      <Download />
+                      <span>下载</span>
+                    </a>
+                  ) : (
+                    <button
+                      className="icon-button"
+                      aria-label={`下载 ${track.title}`}
+                      title="下载"
+                      onClick={() => chooseDownload([track])}
+                    >
+                      <Download />
+                      <span>下载</span>
+                    </button>
+                  )}
                 </td>
                 <td className="track-action">
                   <button
@@ -1156,7 +1265,7 @@ export function App() {
                     <span>加入播放列表</span>
                   </button>
                 </td>
-                {view === "playlists" && (
+                {view === "playlists" && !activePlaylist?.read_only && (
                   <td className="track-action">
                     <Button
                       label={`移出歌单 ${track.title}`}
@@ -1300,67 +1409,24 @@ export function App() {
         <aside className="sidebar">
           <div className="brand">
             <AudioLines />
-            musicdl
+            MeloDock
           </div>
           <div className="sidebar-capsules">
-            <nav aria-label="主导航">
-              {(
-                [
-                  "search",
-                  "player",
-                  "playlists",
-                  "queue",
-                  "files",
-                  "organize",
-                  "logs",
-                ] as View[]
-              ).map((name, i) => {
-                const Icon = [
-                  Search,
-                  Music2,
-                  ListMusic,
-                  Download,
-                  Folder,
-                  WandSparkles,
-                  ScrollText,
-                ][i];
-                return (
-                  <button
-                    key={name}
-                    className={`nav-item ${view === name || (name === "playlists" && collectionView) ? "active" : ""}`}
-                    aria-current={
-                      view === name || (name === "playlists" && collectionView)
-                        ? "page"
-                        : undefined
-                    }
-                    onClick={() => {
-                      setView(name);
-                      setSourceFilter("all");
-                      setSelected(new Set());
-                    }}
-                  >
-                    <Icon />
-                    {views[name][0]}
-                    {name === "queue" &&
-                      jobs.some(
-                        (j) => !["complete", "cancelled"].includes(j.status),
-                      ) && (
-                        <span className="nav-count">
-                          {
-                            jobs.filter(
-                              (j) =>
-                                !["complete", "cancelled"].includes(j.status),
-                            ).length
-                          }
-                        </span>
-                      )}
-                    {name === "playlists" && favorites.length > 0 && (
-                      <span className="nav-count">{favorites.length}</span>
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
+            <Navigation
+              active={collectionView ? "playlists" : view}
+              change={(name) => {
+                setView(name);
+                if (name === "playlists")
+                  setPlaylistRefresh((value) => value + 1);
+                setSourceFilter("all");
+                setSelected(new Set());
+              }}
+              downloads={
+                jobs.filter(
+                  (job) => !["complete", "cancelled"].includes(job.status),
+                ).length
+              }
+            />
             <div className="sidebar-bottom">
               {current && (
                 <button
@@ -1375,14 +1441,6 @@ export function App() {
                   <AudioLines />
                 </button>
               )}
-              <button
-                className={`nav-item ${view === "settings" ? "active" : ""}`}
-                aria-current={view === "settings" ? "page" : undefined}
-                onClick={() => setView("settings")}
-              >
-                <Settings />
-                设置
-              </button>
               <div className="user">
                 <span className="avatar">
                   <Music2 />
@@ -1419,7 +1477,7 @@ export function App() {
               <div className="top-actions">
                 <a
                   className="icon-button project-link"
-                  href="https://github.com/Agonie0v0/musicdl"
+                  href="https://github.com/Agonie0v0/melodock"
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="项目地址（在新标签页打开）"
@@ -1440,7 +1498,7 @@ export function App() {
                 }}
               >
                 <ListMusic />
-                我的歌单 · {savedPlaylists.length}
+                我的歌单 · {allPlaylists.length}
               </button>
               <button
                 aria-current={view === "favorites" ? "page" : undefined}
@@ -1475,7 +1533,7 @@ export function App() {
                       <div className="top-actions">
                         <a
                           className="icon-button project-link"
-                          href="https://github.com/Agonie0v0/musicdl"
+                          href="https://github.com/Agonie0v0/melodock"
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label="项目地址（在新标签页打开）"
@@ -1520,7 +1578,7 @@ export function App() {
                             setRecentSearches(history);
                             try {
                               localStorage.setItem(
-                                "musicdl-searches",
+                                "melodock-searches",
                                 JSON.stringify(history),
                               );
                             } catch {
@@ -1579,7 +1637,7 @@ export function App() {
                               onClick={() => {
                                 setRecentSearches([]);
                                 try {
-                                  localStorage.removeItem("musicdl-searches");
+                                  localStorage.removeItem("melodock-searches");
                                 } catch {
                                   /* Storage is optional. */
                                 }
@@ -1804,28 +1862,7 @@ export function App() {
                           <Repeat />
                         </Button>
                       </div>
-                      <div className="player-extras">
-                        <Button
-                          label="静音"
-                          onClick={() => setVolume((v) => (v ? 0 : 0.65))}
-                        >
-                          <Volume2 />
-                        </Button>
-                        <input
-                          type="range"
-                          min="0"
-                          max="1"
-                          step=".01"
-                          value={volume}
-                          style={
-                            {
-                              "--progress": `${Math.round(volume * 100)}%`,
-                            } as React.CSSProperties
-                          }
-                          onChange={(e) => setVolume(Number(e.target.value))}
-                          aria-label="音量"
-                        />
-                      </div>
+                      {volumeControl}
                     </div>
                   </div>
                   <div className="panel-content" role="tabpanel">
@@ -1937,6 +1974,7 @@ export function App() {
                           <Repeat />
                         </Button>
                       </div>
+                      {volumeControl}
                     </div>
                     <div className="album-actions">
                       <button
@@ -1975,7 +2013,13 @@ export function App() {
                         </Button>
                         <button
                           className={`lyric-follow ${follow ? "active" : ""}`}
-                          aria-pressed={follow}
+                          aria-pressed={follow && lines.length > 0}
+                          disabled={!lines.length}
+                          title={
+                            lines.length
+                              ? "跟随当前播放位置"
+                              : "歌词没有时间轴，无法跟随进度"
+                          }
                           onClick={() => setFollow((v) => !v)}
                         >
                           跟随进度
@@ -2277,12 +2321,19 @@ export function App() {
           )}
           {view === "playlists" && (
             <PlaylistLibrary
-              lists={savedPlaylists}
+              lists={allPlaylists}
+              syncError={remotePlaylistError}
+              sync={() => {
+                setPlaylistRefresh((value) => value + 1);
+                void refreshPlaylists().catch(fail);
+              }}
               current={activePlaylist}
               sourceName={(id) =>
-                id === "custom" || id === "local"
-                  ? "自建歌单"
-                  : sources.find((s) => s.id === id)?.label || id
+                id === "navidrome"
+                  ? "Navidrome"
+                  : id === "custom" || id === "local"
+                    ? "自建歌单"
+                    : sources.find((s) => s.id === id)?.label || id
               }
               open={(id) => void openPlaylist(id)}
               back={() => {
@@ -2622,7 +2673,7 @@ export function App() {
             <header className="login-header">
               <div className="login-brand">
                 <AudioLines aria-hidden="true" />
-                <span>musicdl</span>
+                <span>MeloDock</span>
               </div>
               <h2>登录音乐库</h2>
               <p>登录以继续搜索、播放和下载音乐</p>

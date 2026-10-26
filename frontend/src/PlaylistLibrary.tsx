@@ -7,6 +7,7 @@ import {
   Play,
   Plus,
   Search,
+  RefreshCw,
   Trash2,
 } from "lucide-react";
 import { Cover, Modal } from "./components";
@@ -15,6 +16,8 @@ import type { PlaylistSummary, SavedPlaylist, Track } from "./types";
 
 export function PlaylistLibrary({
   lists,
+  syncError,
+  sync,
   current,
   sourceName,
   open,
@@ -30,6 +33,8 @@ export function PlaylistLibrary({
   children,
 }: {
   lists: PlaylistSummary[];
+  syncError: string;
+  sync: () => void;
   current: SavedPlaylist | null;
   sourceName: (id: string) => string;
   open: (id: string) => void;
@@ -95,16 +100,25 @@ export function PlaylistLibrary({
             />
           </label>
           <span className="muted">{lists.length} 个歌单</span>
+          <button className="secondary" onClick={sync}>
+            <RefreshCw />
+            同步歌单
+          </button>
           <button className="primary" onClick={onImport}>
             <Plus />
             导入歌单
           </button>
         </div>
+        {syncError && (
+          <p role="alert" className="library-error">
+            Navidrome 歌单同步失败：{syncError}。可点击“同步歌单”重试。
+          </p>
+        )}
         {!lists.length ? (
           <div className="library-empty">
             <ListMusic />
             <h2>还没有保存的歌单</h2>
-            <p>导入平台歌单，在这里独立保存、播放和管理。</p>
+            <p>导入平台歌单，或连接 Navidrome 自动同步已有歌单。</p>
             <button className="secondary" onClick={onImport}>
               导入第一个歌单
             </button>
@@ -159,7 +173,9 @@ export function PlaylistLibrary({
         <div className="playlist-heading-copy">
           <span className="muted">
             {sourceName(current.source)} ·{" "}
-            {new Date(current.created_at * 1000).toLocaleDateString()} 导入
+            {current.read_only
+              ? "自动同步"
+              : `${new Date(current.created_at * 1000).toLocaleDateString()} 导入`}
           </span>
           <h2>{current.name}</h2>
           <p>
@@ -185,38 +201,60 @@ export function PlaylistLibrary({
               <Plus />
               加入待播
             </button>
-            <button
-              className="secondary"
-              disabled={!current.tracks.length}
-              onClick={() => downloadAll(current.tracks)}
-            >
-              <Download />
-              下载全部
-            </button>
-            <button
-              className="secondary"
-              onClick={() => {
-                setName(current.name);
-                setError("");
-                setEditing(true);
-              }}
-            >
-              <Pencil />
-              重命名
-            </button>
-            <button
-              className="secondary"
-              onClick={() => {
-                setError("");
-                setRemoving(true);
-              }}
-            >
-              <Trash2 />
-              删除歌单
-            </button>
+            {!current.read_only && (
+              <button
+                className="secondary"
+                disabled={!current.tracks.length}
+                onClick={() => downloadAll(current.tracks)}
+              >
+                <Download />
+                下载全部
+              </button>
+            )}
+            {!current.read_only && (
+              <>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setName(current.name);
+                    setError("");
+                    setEditing(true);
+                  }}
+                >
+                  <Pencil />
+                  重命名
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setError("");
+                    setRemoving(true);
+                  }}
+                >
+                  <Trash2 />
+                  删除歌单
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
+      {syncError && (
+        <p role="alert" className="library-error">
+          Navidrome 歌单同步失败：{syncError}
+        </p>
+      )}
+      {current.read_only && (
+        <div className="management-toolbar">
+          <p className="setting-help">
+            与 Navidrome 自动同步；重命名和增删歌曲请在 Navidrome 中操作。
+          </p>
+          <button className="secondary" onClick={sync}>
+            <RefreshCw />
+            同步歌单
+          </button>
+        </div>
+      )}
       {!!current.issues.length && (
         <details className="playlist-issues" open>
           <summary>

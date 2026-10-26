@@ -2,6 +2,8 @@
 
 [返回 README](../README.md)
 
+MeloDock 的新配置统一使用 `MELODOCK_*`；旧 `MUSICDL_*` 仍可直接使用，同时存在时新名称优先。新部署创建 `melodock.db`，已有 `musicdl.db` 会继续使用；请保留原数据与音乐挂载。浏览器保存的主题、导航顺序、搜索历史与音乐库显示偏好会自动迁移到新名称。
+
 下载后自动刮削、整理、已有曲库批处理及 Navidrome 连接，见 [音乐库使用说明](music-library.md)。
 
 ## NAS 目录权限
@@ -12,8 +14,8 @@
 
 ```yaml
     environment:
-      MUSICDL_USER: admin
-      MUSICDL_PASS: '你的登录密码'
+      MELODOCK_USER: admin
+      MELODOCK_PASS: '你的登录密码'
       PUID: '1000'
       PGID: '1000'
 ```
@@ -26,17 +28,17 @@
 
 Docker 在 Compose 中配置登录账号和密码；源码运行可复制 [.env.example](../.env.example) 为 `.env`。本机回环监听可不启用登录，非回环监听必须配置账号密码。域名和 IP 无需加入白名单。
 
-通过 HTTPS 反向代理访问时，添加 `MUSICDL_COOKIE_SECURE: '1'`；直接 HTTP 访问使用 `0`。反向代理应保留完整路径、查询参数及音频 Range 请求头。
+通过 HTTPS 反向代理访问时，添加 `MELODOCK_COOKIE_SECURE: '1'`；直接 HTTP 访问使用 `0`。反向代理应保留完整路径、查询参数及音频 Range 请求头。
 
 | 环境变量 | 用途 |
 | --- | --- |
-| `MUSICDL_USER` / `MUSICDL_PASS` | 登录账号和密码，必须同时设置 |
-| `MUSICDL_COOKIE_SECURE` | HTTP 为 `0`，HTTPS 为 `1` |
-| `MUSICDL_HOST` / `MUSICDL_PORT` | 服务监听地址与端口，本机默认 `127.0.0.1:8765` |
-| `MUSICDL_DOWNLOAD_DIR` | 音乐目录；Docker 默认 `/music` |
-| `MUSICDL_DATA_DIR` | 数据目录；Docker 默认 `/data` |
-| `MUSICDL_CONFIG` | 引擎配置文件；Docker 默认 `/data/config.json` |
-| `MUSICDL_MAX_DOWNLOAD_TASKS` | 下载并发数 `1–4`，默认 `2` |
+| `MELODOCK_USER` / `MELODOCK_PASS` | 登录账号和密码，必须同时设置 |
+| `MELODOCK_COOKIE_SECURE` | HTTP 为 `0`，HTTPS 为 `1` |
+| `MELODOCK_HOST` / `MELODOCK_PORT` | 服务监听地址与端口，本机默认 `127.0.0.1:8765` |
+| `MELODOCK_DOWNLOAD_DIR` | 音乐目录；Docker 默认 `/music` |
+| `MELODOCK_DATA_DIR` | 数据目录；Docker 默认 `/data` |
+| `MELODOCK_CONFIG` | 引擎配置文件；Docker 默认 `/data/config.json` |
+| `MELODOCK_MAX_DOWNLOAD_TASKS` | 下载并发数 `1–4`，默认 `2` |
 | `PUID` / `PGID` | Docker 应用用户和组，默认 `10001:10001` |
 
 ## 机器人配置
@@ -81,11 +83,11 @@ Telegram 也可点击消息按钮操作。搜索结果分页展示，每页 5 �
 
 机器人与网页共用下载队列。Telegram 的 MP3 / M4A / FLAC 优先使用 `sendAudio`；FLAC 上传时保留原文件名和字节，并标记 `audio/flac`，客户端支持时可在聊天内播放。音频格式被明确拒绝后才改用 `sendDocument`，不转码。文件采用流式上传，不把整个附件读入内存，上传期间不阻塞搜索卡片更新。Telegram 文件均先尝试上传，超过 50 MB 也不提前拦截；接口明确拒绝文件大小后回退到签名下载链接，并在日志和通知中显示实际错误。已拒绝上传的文件在链接通知重试时不会重复上传。企业微信仍使用临时素材发送文件，超过 20 MB 时提供链接。网络错误保留通知重试，不重新下载曲目；`/file 任务编号` 可重新尝试发送文件，`/link 任务编号` 可获取链接。
 
-Telegram 文档标注云端上传上限为 50 MB，官方 [Local Bot API Server](https://core.telegram.org/bots/api#using-a-local-bot-api-server) 的 `--local` 模式为 2000 MB。通知设置中可以直接开启“使用内置 Telegram 本地服务（大文件上传）”，填写从 [my.telegram.org](https://my.telegram.org/apps) 获取的 API ID 和 API Hash；Docker 镜像会内置官方程序并自动管理本机 8081 端口。也可以关闭内置模式，填写自建 API 地址（例如 `http://telegram-bot-api:8081`，或环境变量 `MUSICDL_TG_API_URL`）。本项目不会按这两个数值提前拒绝文件，以实际接口响应为准。切换服务器时只会在旧、新 Telegram 配置都启用且由当前配置管理时调用旧服务的 `logOut`；其他程序占用 Token 或环境变量首次部署时，请按 [README 的完整指南](../README.md#telegram-local-bot-api-server) 和[官方迁移说明](https://core.telegram.org/bots/api#moving-a-bot-to-a-local-server)处理。本地服务只监听回环地址，不需要与 musicdl 共享音乐目录。仅使用 Telegram 文件交付时访问地址可留空，大小被拒绝后的下载链接需要配置访问地址。实测时可在“运行日志 → 通知与机器人”查看易懂的失败原因，展开“查看原始信息”可保留平台错误。
+Telegram 文档标注云端上传上限为 50 MB，官方 [Local Bot API Server](https://core.telegram.org/bots/api#using-a-local-bot-api-server) 的 `--local` 模式为 2000 MB。通知设置中可以直接开启“使用内置 Telegram 本地服务（大文件上传）”，填写从 [my.telegram.org](https://my.telegram.org/apps) 获取的 API ID 和 API Hash；Docker 镜像会内置官方程序并自动管理本机 8081 端口。也可以关闭内置模式，填写自建 API 地址（例如 `http://telegram-bot-api:8081`，或环境变量 `MELODOCK_TG_API_URL`）。本项目不会按这两个数值提前拒绝文件，以实际接口响应为准。切换服务器时只会在旧、新 Telegram 配置都启用且由当前配置管理时调用旧服务的 `logOut`；其他程序占用 Token 或环境变量首次部署时，请按 [README 的完整指南](../README.md#telegram-local-bot-api-server) 和[官方迁移说明](https://core.telegram.org/bots/api#moving-a-bot-to-a-local-server)处理。本地服务只监听回环地址，不需要与 MeloDock 共享音乐目录。仅使用 Telegram 文件交付时访问地址可留空，大小被拒绝后的下载链接需要配置访问地址。实测时可在“运行日志 → 通知与机器人”查看易懂的失败原因，展开“查看原始信息”可保留平台错误。
 
 ### 飞书、钉钉、Discord 下载通知
 
-在“更多下载通知渠道”填入平台生成的 HTTPS 群 Webhook 并启用。飞书 / Lark 与钉钉可填写加签密钥；如果使用关键词校验，请允许 `musicdl`。Webhook 为凭据，界面不回显；留空保留原值，可勾选清除。配置检查只校验地址和格式，不向群发送测试消息，实际权限及平台安全设置在首次通知时验证。
+在“更多下载通知渠道”填入平台生成的 HTTPS 群 Webhook 并启用。飞书 / Lark 与钉钉可填写加签密钥；如果使用关键词校验，请允许 `MeloDock`。Webhook 为凭据，界面不回显；留空保留原值，可勾选清除。配置检查只校验地址和格式，不向群发送测试消息，实际权限及平台安全设置在首次通知时验证。
 
 通知启用后产生的新下载任务的完成、失败、取消状态，覆盖 Web 与私聊下载；首次启用不会推送历史任务。完成通知附签名下载链接，访问地址须能被群成员访问，链接持有者可以下载，请控制群成员范围与有效期。Webhook 通道仅通知结果；搜索、选曲和直接文件交付使用 Telegram 或企业微信。
 
@@ -114,7 +116,7 @@ Telegram 文档标注云端上传上限为 50 MB，官方 [Local Bot API Server]
 
 在「设置 → 引擎行为」中可开启「按需解析」，让网页搜索先显示候选歌曲，点击播放或选择下载版本时才解析音频地址；此模式下格式、音质和大小可能暂不可见，音质显示为“待确认”。关闭开关恢复搜索时解析。保存后对下一次搜索生效，无需重启，重启后仍保留选择。
 
-网页保存的选择优先于 `MUSICDL_LAZY_SEARCH`；尚未保存选择时使用环境变量，未设置则默认关闭。之前通过环境变量开启的部署也可直接在网页中关闭并保存。
+网页保存的选择优先于 `MELODOCK_LAZY_SEARCH`；尚未保存选择时使用环境变量，未设置则默认关闭。之前通过环境变量开启的部署也可直接在网页中关闭并保存。
 
 搜索进程按需创建，最多保留两个空闲进程供后续任务复用，默认空闲 20 秒回收。取消或超时会终止正在执行该任务的进程；相同查询的多个订阅者共享任务，只有最后一个订阅者退出才会取消。网页断开后保留 10 秒重连时间，创建后 30 秒未订阅的搜索会自动停止。
 
@@ -124,13 +126,13 @@ Telegram 文档标注云端上传上限为 50 MB，官方 [Local Bot API Server]
 
 | 环境变量 | 默认值 | 含义 |
 | --- | --- | --- |
-| `MUSICDL_SEARCH_WORKERS` | `4` | 同时执行的搜索/按需解析数，范围 1–6；低内存 NAS 可试 2 |
-| `MUSICDL_SEARCH_WORKER_IDLE` | `20` | 空闲进程保留秒数；0 表示每个任务结束即退出 |
-| `MUSICDL_SEARCH_BUDGET` | `120` | 单次搜索或按需解析的总执行秒数，不含排队 |
-| `MUSICDL_SEARCH_QUEUE_TIMEOUT` | `30` | 等待搜索槽位的最长秒数 |
-| `MUSICDL_SEARCH_CACHE_TTL` | `30` | 查询缓存秒数；0 关闭已完成结果缓存，仍合并正在执行的相同查询 |
-| `MUSICDL_SONG_CACHE_MB` | `32` | 完整曲目的内存缓存预算，按序列化大小估算，同时最多 3000 首；大曲目保留磁盘副本，按需读取 |
-| `MUSICDL_LAZY_SEARCH` | `0` | 未在网页保存选择时的默认值；1 开启网页搜索按需解析，0 搜索时解析并展示格式、音质和可用的大小 |
+| `MELODOCK_SEARCH_WORKERS` | `4` | 同时执行的搜索/按需解析数，范围 1–6；低内存 NAS 可试 2 |
+| `MELODOCK_SEARCH_WORKER_IDLE` | `20` | 空闲进程保留秒数；0 表示每个任务结束即退出 |
+| `MELODOCK_SEARCH_BUDGET` | `120` | 单次搜索或按需解析的总执行秒数，不含排队 |
+| `MELODOCK_SEARCH_QUEUE_TIMEOUT` | `30` | 等待搜索槽位的最长秒数 |
+| `MELODOCK_SEARCH_CACHE_TTL` | `30` | 查询缓存秒数；0 关闭已完成结果缓存，仍合并正在执行的相同查询 |
+| `MELODOCK_SONG_CACHE_MB` | `32` | 完整曲目的内存缓存预算，按序列化大小估算，同时最多 3000 首；大曲目保留磁盘副本，按需读取 |
+| `MELODOCK_LAZY_SEARCH` | `0` | 未在网页保存选择时的默认值；1 开启网页搜索按需解析，0 搜索时解析并展示格式、音质和可用的大小 |
 
 网页设置里的请求超时仍是单次网络请求超时，与上述总搜索预算不同。运行日志记录排队时间、执行时间和首条增量时间。
 
@@ -142,7 +144,7 @@ Telegram 文档标注云端上传上限为 50 MB，官方 [Local Bot API Server]
 
 搜索、播放或通知失败时，在 **运行日志** 中按类别和错误级别筛选并导出。日志保留当前进程最近 800 条，重启后清空；Windows 启动问题查看 `logs/startup.log`。
 
-部分 CDN 证书异常时，试听会对不携带账号凭据的请求执行兼容重试。需要严格证书校验时设置 `MUSICDL_PREVIEW_STRICT_TLS=1`；这不改变原下载器行为。
+部分 CDN 证书异常时，试听会对不携带账号凭据的请求执行兼容重试。需要严格证书校验时设置 `MELODOCK_PREVIEW_STRICT_TLS=1`；这不改变原下载器行为。
 
 ## 开发检查
 
@@ -158,12 +160,12 @@ python -m pytest legacy/tests/test_app.py -q
 python -m pytest tests/test_launcher.py tests/test_docker_entrypoint.py -q
 ```
 
-浏览器检查：在 `frontend` 目录运行 `npx playwright install chromium`，再运行 `npm run test:browser`。Windows 可通过 `MUSICDL_BROWSER_EXECUTABLE` 指定 Chrome / Edge 路径。
+浏览器检查：在 `frontend` 目录运行 `npx playwright install chromium`，再运行 `npm run test:browser`。Windows 可通过 `MELODOCK_BROWSER_EXECUTABLE` 指定 Chrome / Edge 路径。
 
 源码构建 Docker：
 
 ```sh
-docker build -t ghcr.io/agonie0v0/musicdl:latest .
+docker build -t ghcr.io/agonie0v0/melodock:latest .
 docker compose up -d --pull never
 ```
 

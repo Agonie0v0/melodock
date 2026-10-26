@@ -73,7 +73,8 @@ def test_musicbrainz_request_identification_proxy_and_rate_limit(monkeypatch):
     scraper.musicbrainz('recording', {'query': 'Song'})
     scraper.musicbrainz('recording', {'query': 'Other'})
     assert sleeps == pytest.approx([0, 1.1])
-    assert 'github.com/Agonie0v0/musicdl' in calls[0][1]['headers']['User-Agent']
+    assert 'MeloDock/3.0' in calls[0][1]['headers']['User-Agent']
+    assert 'github.com/Agonie0v0/melodock' in calls[0][1]['headers']['User-Agent']
     assert calls[0][1]['proxies']['https'] == 'http://proxy:8080'
     assert calls[0][1]['params']['fmt'] == 'json'
 

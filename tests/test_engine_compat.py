@@ -27,7 +27,7 @@ import engine_worker
 import engine_api
 from engine_api import SearchBody
 
-HEADERS = {'X-MusicDL-Request': '1'}
+HEADERS = {'X-MeloDock-Request': '1'}
 
 
 @pytest.mark.parametrize('source', ['QQMusicClient', 'NeteaseMusicClient'])
@@ -245,7 +245,7 @@ def test_import_creates_managed_playlist_with_native_failure_report(monkeypatch)
     assert client.get(f'/api/playlists/{ident}').json()['tracks'] == saved['tracks']
     # Saved collections and complete SongInfo survive outside in-memory results.
     import sqlite3
-    with sqlite3.connect(_root / 'data/musicdl.db') as db:
+    with sqlite3.connect(_root / 'data/melodock.db') as db:
         body = json.loads(db.execute("SELECT body FROM records WHERE kind='collection' AND id=?", (ident,)).fetchone()[0])
         assert body['tracks'][0]['id'] == track['id']
     logs = client.get('/api/logs').json()['logs']
@@ -285,7 +285,7 @@ def test_download_record_management_preserves_audio_and_rejects_active_tasks():
         {'id': 'management-paused', 'status': 'paused', 'track': {'title': 'paused'}},
         {'id': 'management-active', 'status': 'queued', 'track': {'title': 'active'}},
     ]
-    with sqlite3.connect(_root / 'data/musicdl.db') as db:
+    with sqlite3.connect(_root / 'data/melodock.db') as db:
         for record in records:
             db.execute('INSERT INTO records(kind,id,body) VALUES (?,?,?)', ('download', record['id'], json.dumps(record)))
     assert client.delete('/api/downloads/management-active', headers=HEADERS).status_code == 409
@@ -294,7 +294,7 @@ def test_download_record_management_preserves_audio_and_rejects_active_tasks():
     assert client.delete('/api/downloads/management-paused', headers=HEADERS).status_code == 200
     assert not staging.exists()
     assert client.delete('/api/downloads/management-paused', headers=HEADERS).status_code == 404
-    with sqlite3.connect(_root / 'data/musicdl.db') as db:
+    with sqlite3.connect(_root / 'data/melodock.db') as db:
         db.execute("DELETE FROM records WHERE kind='download' AND id='management-active'")
     audio.unlink()
 
@@ -310,7 +310,7 @@ def test_library_deletion_checks_paths_and_clears_download_link():
     lyrics.write_text('lyrics', encoding='utf-8')
     token = json.dumps([str(base), audio.name], ensure_ascii=False)
     job = {'id': 'management-file', 'status': 'complete', 'track': {'title': 'fixture'}, 'file': token}
-    with sqlite3.connect(_root / 'data/musicdl.db') as db:
+    with sqlite3.connect(_root / 'data/melodock.db') as db:
         db.execute('INSERT INTO records(kind,id,body) VALUES (?,?,?)', ('download', job['id'], json.dumps(job)))
     outside = base.parent / 'must-keep.txt'
     outside.write_text('keep', encoding='utf-8')
@@ -376,6 +376,24 @@ def test_local_song_library_plays_and_edits_real_audio_tags():
     assert not any(t['id'] == track['id'] for t in client.get('/api/playlist').json())
     assert not any(t['id'] == track['id'] for t in client.get('/api/favorites').json())
     lyrics.unlink()
+
+
+def test_remote_playback_lyrics_use_the_song_id_and_structured_timestamps(monkeypatch):
+    client = TestClient(app.app)
+    nav = app.app.state.engine_test['library'].navidrome
+    calls = []
+    def request(endpoint, **params):
+        calls.append((endpoint, params))
+        if endpoint == 'getAlbum':
+            return {'album': {'id': 'lyric-album', 'song': [
+                {'id': 'lyric-song', 'title': '同名歌曲', 'artist': '歌手', 'suffix': 'flac'}]}}
+        assert endpoint == 'getLyricsBySongId' and params == {'id': 'lyric-song'}
+        return {'lyricsList': {'structuredLyrics': [{'synced': True, 'offset': -250,
+                'line': [{'start': 2000, 'value': '同步歌词'}]}]}}
+    monkeypatch.setattr(nav, 'request', request)
+    track = client.get('/api/navidrome/albums/lyric-album').json()['tracks'][0]
+    assert client.get(f'/api/tracks/{track["id"]}/lyrics').json() == {'text': '[00:02.250]同步歌词'}
+    assert calls[-1] == ('getLyricsBySongId', {'id': 'lyric-song'})
 
 
 def test_search_playback_does_not_require_or_create_a_download(monkeypatch):

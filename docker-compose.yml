@@ -1,7 +1,7 @@
 services:
-  musicdl-webui:
-    container_name: musicdl
-    image: ghcr.io/agonie0v0/musicdl:latest
+  melodock-webui:
+    container_name: melodock
+    image: ghcr.io/agonie0v0/melodock:latest
     restart: unless-stopped
     init: true
     ports:
@@ -10,8 +10,8 @@ services:
       - ./music:/music
       - ./data:/data
     environment:
-      MUSICDL_USER: admin
-      MUSICDL_PASS: '请改成你自己的密码'
+      MELODOCK_USER: admin
+      MELODOCK_PASS: '请改成你自己的密码'
       # NAS 有专用目录用户时，取消注释并填写其 UID/GID（在 NAS 上执行 id 用户名）
       # PUID: '1000'
       # PGID: '1000'

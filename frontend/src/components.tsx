@@ -74,6 +74,9 @@ export function Lyrics({
   const current = activeLine(lines, time);
   const container = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (container.current) container.current.scrollTop = 0;
+  }, [lines, text]);
+  useEffect(() => {
     const center = () => {
       if (large && container.current)
         container.current.style.setProperty(
@@ -101,7 +104,7 @@ export function Lyrics({
   return (
     <div
       ref={container}
-      className={`${large ? "full-lyrics" : "compact-lyrics"} ${size ? "large" : ""}`}
+      className={`${large ? "full-lyrics" : "compact-lyrics"} ${size ? "large" : ""} ${lines.length ? "" : "untimed"}`}
     >
       {lines.length ? (
         lines.map((line, i) => (

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, WandSparkles } from "lucide-react";
 import { api } from "./api";
-import { MetadataSources } from "./LibrarySettings";
 import type { LibraryConfig } from "./types";
 
 export function LibraryWorkbench({
@@ -34,21 +33,15 @@ export function LibraryWorkbench({
     <section className="view library-workbench" aria-label="刮削整理工作台">
       <div className="library-heading">
         <div>
-          <h2>把已有音乐整理成曲库</h2>
+          <h2>处理音乐文件</h2>
           <p>
             选择文件、查找资料，再审核标签和归档路径。确认应用后才会修改文件。
           </p>
         </div>
         <button className="secondary" onClick={rules}>
-          默认规则设置 <ArrowRight />
+          前往规则设置 <ArrowRight />
         </button>
       </div>
-      <ol className="library-steps" aria-label="整理流程">
-        <li>选择下方歌曲</li>
-        <li>生成修改预览</li>
-        <li>审核版本与差异</li>
-        <li>应用并保留恢复记录</li>
-      </ol>
       {!config && (
         <p role={error ? "alert" : "status"}>
           {error || "正在读取刮削规则…"}{" "}
@@ -107,45 +100,30 @@ export function LibraryWorkbench({
                 <option value="organize">只按现有标签整理目录</option>
               </select>
             </label>
-            {action !== "organize" && (
-              <label className="check-label">
-                <input
-                  type="checkbox"
-                  checked={config.overwrite}
-                  disabled={busy}
-                  onChange={(e) =>
-                    setConfig({ ...config, overwrite: e.target.checked })
-                  }
-                />
-                覆盖已有标签（手动锁定字段始终保留）
-              </label>
-            )}
           </div>
-          {action !== "organize" && (
-            <details className="workbench-sources">
-              <summary>
-                本次来源：
+          <div className="workbench-rule-summary" aria-label="当前处理规则">
+            <p>使用已保存的默认规则</p>
+            {action !== "organize" && (
+              <p>
+                资料来源：
                 {config.sources
                   .map(
                     (id) =>
-                      config.metadata_sources?.find((s) => s.id === id)
-                        ?.label || id,
+                      config.metadata_sources?.find(
+                        (source) => source.id === id,
+                      )?.label || id,
                   )
-                  .join("、") || "未选择"}
-              </summary>
-              <MetadataSources
-                config={config}
-                disabled={busy}
-                change={(sources) => setConfig({ ...config, sources })}
-              />
-            </details>
-          )}
-          {action !== "scrape" && (
-            <p className="library-path">
-              目标目录：{config.library_dir} / {config.folder_template} /{" "}
-              {config.filename_template}
-            </p>
-          )}
+                  .join("、") || "未选择"}{" "}
+                · {config.overwrite ? "覆盖未锁定标签" : "仅补全空值"}
+              </p>
+            )}
+            {action !== "scrape" && (
+              <p className="library-path">
+                目标目录：{config.library_dir} / {config.folder_template} /{" "}
+                {config.filename_template}
+              </p>
+            )}
+          </div>
           <div className="management-toolbar workbench-submit">
             <span aria-live="polite">
               {directoryMode
@@ -161,8 +139,6 @@ export function LibraryWorkbench({
               }
               onClick={() =>
                 start(action, {
-                  ...(action !== "organize" ? { sources: config.sources } : {}),
-                  overwrite: config.overwrite,
                   ...(directoryMode ? { scope_dir: directory } : {}),
                 })
               }
@@ -178,8 +154,8 @@ export function LibraryWorkbench({
             )}
           </div>
           <p className="setting-help">
-            这里只调整本次任务。自动下载处理、补全字段、歌词封面和目录模板统一在“设置
-            → 刮削与归档”中配置。
+            资料来源、覆盖规则、歌词封面和归档模板统一在“设置 →
+            刮削与归档”中配置。
           </p>
         </>
       )}

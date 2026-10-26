@@ -28,6 +28,7 @@ from fastapi.exception_handlers import http_exception_handler
 from pydantic import BaseModel, Field
 import engine_worker
 import local_library
+from runtime_config import database_path
 from library_pipeline import LibraryPipeline, ProcessBody
 from metadata_scraper import from_song as song_metadata
 from search_runtime import SearchWorkers, SearchCoordinator, deliver, terminate
@@ -125,7 +126,7 @@ def install(old, root):
     private.mkdir(exist_ok=True)
     if os.name != 'nt':
         private.chmod(0o700)
-    database = data / 'musicdl.db'
+    database = database_path(data)
     db_lock = threading.RLock()
     db = sqlite3.connect(database, check_same_thread=False)
     if os.name != 'nt':
@@ -686,11 +687,8 @@ def install(old, root):
     async def lyrics(sid: str):
         record = await asyncio.to_thread(get, 'track', sid)
         if record and record.get('navidrome_id'):
-            try:
-                data = await asyncio.to_thread(library.navidrome.request, 'getLyrics', artist=record['track']['artist'], title=record['track']['title'])
-                return {'text': (data.get('lyrics') or {}).get('value', '')}
-            except HTTPException:
-                return {'text': ''}
+            return {'text': await asyncio.to_thread(library.navidrome.lyrics, record['navidrome_id'],
+                                                   artist=record['track']['artist'], title=record['track']['title'])}
         if record and record.get('local_path'):
             try:
                 return {'text': await asyncio.to_thread(local_library.read_lyrics, resolve_library_file(record['local_path']))}

@@ -194,7 +194,7 @@ def redactlog(message):
         except ValueError:
             return '[地址已隐藏]'
     text = re.sub(r'https?://[^\s<>\'\"]+', hide_url, text)
-    text = re.sub(r'(?im)\b(cookies?|authorization|password|passwd|token|secret|api[_-]?key|MUSICDL_PASS)[\'\"]?\s*[:=]\s*[^\n]+',
+    text = re.sub(r'(?im)\b(cookies?|authorization|password|passwd|token|secret|api[_-]?key|MUSICDL_PASS|MELODOCK_PASS)[\'\"]?\s*[:=]\s*[^\n]+',
                   r'\1=[已隐藏]', text)
     return text[:16000]
 
@@ -545,7 +545,7 @@ if not AUTH_ENABLED and not IS_LOOPBACK_BIND and not _env_flag('MUSICDL_ALLOW_IN
 
 AUTH_USER_DIGEST = hashlib.sha256((AUTH_USER or '').encode('utf-8')).digest()
 AUTH_PASS_DIGEST = hashlib.sha256((AUTH_PASS or '').encode('utf-8')).digest()
-SESSION_COOKIE = 'musicdl_session'
+SESSION_COOKIE = 'melodock_session'
 SESSION_TTL = max(300, int(os.environ.get('MUSICDL_SESSION_TTL', '43200')))
 COOKIE_SECURE = _env_flag('MUSICDL_COOKIE_SECURE', default=not IS_LOOPBACK_BIND)
 SESSIONS: dict[str, float] = {}
@@ -596,7 +596,8 @@ def _session_valid(token: str | None) -> bool:
 async def security_middleware(request: Request, call_next):
     path = request.url.path
     if path.startswith('/api/'):
-        if request.method.upper() in UNSAFE_METHODS and request.headers.get('x-musicdl-request') != '1':
+        if request.method.upper() in UNSAFE_METHODS and not any(
+                request.headers.get(name) == '1' for name in ('x-melodock-request', 'x-musicdl-request')):
             return JSONResponse(status_code=403, content={'detail': '请求来源校验失败'})
         if AUTH_ENABLED and path not in {'/api/auth/login', '/api/auth/status', '/api/health'}:
             if not _session_valid(request.cookies.get(SESSION_COOKIE)):
