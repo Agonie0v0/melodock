@@ -1,8 +1,8 @@
 # 从当前源码构建，避免依赖尚未发布此功能的 latest 镜像。
 services:
-  melodock-webui:
+  melokeep-webui:
     build: .
-    image: melodock-local:library
+    image: melokeep-local:library
     restart: unless-stopped
     init: true
     ports:
@@ -11,8 +11,8 @@ services:
       - ./music:/music
       - ./data:/data
     environment:
-      MELODOCK_USER: admin
-      MELODOCK_PASS: '请改成你自己的强密码'
+      MELOKEEP_USER: admin
+      MELOKEEP_PASS: '请改成你自己的强密码'
       # PUID: '1000'
       # PGID: '1000'
 

@@ -99,7 +99,7 @@ export function RuntimeLogs({ active }: { active: boolean }) {
     );
     const link = document.createElement("a");
     link.href = url;
-    link.download = `melodock-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
+    link.download = `melokeep-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }

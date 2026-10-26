@@ -616,7 +616,7 @@ export function LibrarySettings({
         >
           <h2>Navidrome 连接</h2>
           <p>
-            在 MeloDock 浏览远程专辑、歌手与歌曲，并可在整理后通知 Navidrome
+            在 MeloKeep 浏览远程专辑、歌手与歌曲，并可在整理后通知 Navidrome
             扫描。
           </p>
           <label className="library-switch">
@@ -633,7 +633,7 @@ export function LibrarySettings({
             <span>
               <strong>启用 Navidrome</strong>
               <small>
-                需要已有的 Navidrome 服务。MeloDock 自身的刮削和整理可独立使用。
+                需要已有的 Navidrome 服务。MeloKeep 自身的刮削和整理可独立使用。
               </small>
             </span>
           </label>

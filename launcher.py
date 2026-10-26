@@ -44,7 +44,7 @@ def main():
             stream.reconfigure(encoding='utf-8', errors='replace')
     logs = ROOT / 'logs'
     logs.mkdir(exist_ok=True)
-    logger = logging.getLogger('melodock.launcher')
+    logger = logging.getLogger('melokeep.launcher')
     logger.setLevel(logging.INFO)
     logger.addHandler(logging.StreamHandler(sys.stdout))
     file_log = RotatingFileHandler(logs / 'startup.log', maxBytes=2_000_000, backupCount=2, encoding='utf-8')
@@ -57,18 +57,18 @@ def main():
         host = os.environ.get('MUSICDL_HOST') or os.environ.get('MUSICDL_BIND', '127.0.0.1')
         port = int(os.environ.get('MUSICDL_PORT', '8765'))
         if not 1 <= port <= 65535:
-            raise ValueError('MUSICDL_PORT 必须在 1–65535 之间')
+            raise ValueError('MELOKEEP_PORT 必须在 1–65535 之间')
         status, url = service_status(host, port)
         if status == 'running':
-            logger.info('MeloDock 已在运行：%s。正在打开现有服务，不会重复启动。', url)
+            logger.info('MeloKeep 已在运行：%s。正在打开现有服务，不会重复启动。', url)
             if os.environ.get('MUSICDL_NO_BROWSER') != '1':
                 webbrowser.open(url)
             return 0
         if status in {'occupied', 'old-version'}:
-            logger.error('端口 %s 已被%s占用。请关闭该程序，或在 .env 中设置其他 MUSICDL_PORT 后重试。',
+            logger.error('端口 %s 已被%s占用。请关闭该程序，或在 .env 中设置其他 MELOKEEP_PORT 后重试。',
                          port, '旧 Rust 版 musicdl' if status == 'old-version' else '其他程序')
             return 1
-        logger.info('正在启动 MeloDock：%s；启动日志：%s', url, logs / 'startup.log')
+        logger.info('正在启动 MeloKeep：%s；启动日志：%s', url, logs / 'startup.log')
         with subprocess.Popen([sys.executable, '-u', str(ROOT / 'app.py')], cwd=ROOT,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, encoding='utf-8', errors='replace') as process:

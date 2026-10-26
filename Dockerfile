@@ -19,14 +19,14 @@ RUN git init . && git remote add origin https://github.com/tdlib/telegram-bot-ap
     && strip /opt/telegram/bin/telegram-bot-api
 
 FROM python:3.14-slim-bookworm
-LABEL org.opencontainers.image.title="MeloDock" \
-      org.opencontainers.image.source="https://github.com/Agonie0v0/melodock"
+LABEL org.opencontainers.image.title="MeloKeep" \
+      org.opencontainers.image.source="https://github.com/Agonie0v0/melokeep"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg libchromaprint-tools curl libssl3 zlib1g libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 10001 melodock && useradd --uid 10001 --gid melodock --create-home melodock \
-    && mkdir -p /music /data /app/frontend /licenses && chown -R melodock:melodock /music /data /app
+    && groupadd --gid 10001 melokeep && useradd --uid 10001 --gid melokeep --create-home melokeep \
+    && mkdir -p /music /data /app/frontend /licenses && chown -R melokeep:melokeep /music /data /app
 WORKDIR /app
-ENV HOME=/home/melodock
+ENV HOME=/home/melokeep
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py engine_api.py engine_worker.py search_runtime.py provider_compat.py local_library.py library_pipeline.py library_rules.py audio_tools.py metadata_scraper.py navidrome.py resumable_download.py bot_notifications.py telegram_local.py error_messages.py runtime_config.py docker-entrypoint.py ./

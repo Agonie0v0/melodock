@@ -26,6 +26,7 @@ try {
   browser = await chromium.launch({
     headless: true,
     executablePath:
+      process.env.MELOKEEP_BROWSER_EXECUTABLE ||
       process.env.MELODOCK_BROWSER_EXECUTABLE ||
       process.env.MUSICDL_BROWSER_EXECUTABLE ||
       undefined,
@@ -791,19 +792,26 @@ try {
   };
   await page.addInitScript(() => {
     if (sessionStorage.getItem("rebrand-migration-seeded")) return;
-    localStorage.setItem("musicdl-theme", "system");
+    localStorage.setItem("musicdl-theme", "dark");
+    localStorage.setItem("melodock-theme", "system");
     localStorage.setItem("musicdl-navidrome-layout", "list");
+    localStorage.setItem("melodock-navidrome-mode", "artists");
+    localStorage.setItem("melokeep-navidrome-mode", "songs");
     sessionStorage.setItem("rebrand-migration-seeded", "1");
   });
   await page.goto(base);
-  await expect(page).toHaveTitle("MeloDock");
+  await expect(page).toHaveTitle("MeloKeep");
   assert.deepEqual(
     await page.evaluate(() => [
-      localStorage.getItem("melodock-theme"),
+      localStorage.getItem("melokeep-theme"),
       localStorage.getItem("musicdl-theme"),
-      localStorage.getItem("melodock-navidrome-layout"),
+      localStorage.getItem("melokeep-navidrome-layout"),
+      localStorage.getItem("melodock-theme"),
+      localStorage.getItem("musicdl-navidrome-layout"),
+      localStorage.getItem("melodock-navidrome-mode"),
+      localStorage.getItem("melokeep-navidrome-mode"),
     ]),
-    ["system", null, "list"],
+    ["system", null, "list", null, null, null, "songs"],
   );
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForFunction(
@@ -2466,7 +2474,7 @@ try {
     await expect(projectLink).toBeVisible();
     await expect(projectLink).toHaveAttribute(
       "href",
-      "https://github.com/Agonie0v0/melodock",
+      "https://github.com/Agonie0v0/melokeep",
     );
     await expect(projectLink).toHaveAttribute("target", "_blank");
     const navButtons = page.locator(".sidebar-capsules .nav-item");

@@ -1,15 +1,19 @@
-"""MeloDock configuration with compatibility for existing musicdl deployments."""
+"""MeloKeep configuration with compatibility for MeloDock and musicdl deployments."""
 import os
 
 
 def apply_environment_aliases():
     # The legacy engine and existing integrations still read MUSICDL_* internally.
-    # Explicit MELODOCK_* values, including empty values, take precedence.
-    for name, value in list(os.environ.items()):
-        if name.startswith('MELODOCK_'):
-            os.environ['MUSICDL_' + name[len('MELODOCK_'):]] = value
+    # Explicit MELOKEEP_* values, including empty values, take precedence.
+    for prefix in ('MELODOCK_', 'MELOKEEP_'):
+        for name, value in list(os.environ.items()):
+            if name.startswith(prefix):
+                os.environ['MUSICDL_' + name[len(prefix):]] = value
 
 
 def database_path(directory):
-    current, previous = directory / 'melodock.db', directory / 'musicdl.db'
-    return previous if previous.exists() and not current.exists() else current
+    for name in ('melokeep.db', 'melodock.db', 'musicdl.db'):
+        path = directory / name
+        if path.exists():
+            return path
+    return directory / 'melokeep.db'

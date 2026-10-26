@@ -49,7 +49,7 @@ jobs:
           push: true
           platforms: ${{ matrix.platform }}
           tags: |
-            ghcr.io/agonie0v0/melodock:sha-${{ github.sha }}-${{ matrix.arch }}
+            ghcr.io/agonie0v0/melokeep:sha-${{ github.sha }}-${{ matrix.arch }}
             ghcr.io/agonie0v0/musicdl:sha-${{ github.sha }}-${{ matrix.arch }}
           build-args: TELEGRAM_BUILD_JOBS=4
           cache-from: type=gha,scope=musicdl-${{ matrix.arch }}
@@ -80,7 +80,8 @@ jobs:
       - name: 合并多架构 manifest
         run: |
           set -eu
-          image=ghcr.io/agonie0v0/melodock
+          image=ghcr.io/agonie0v0/melokeep
+          previous_image=ghcr.io/agonie0v0/melodock
           legacy_image=ghcr.io/agonie0v0/musicdl
           source_amd64="$image:sha-${GITHUB_SHA}-amd64"
           source_arm64="$image:sha-${GITHUB_SHA}-arm64"
@@ -88,6 +89,9 @@ jobs:
             -t "$image:sha-${GITHUB_SHA}" \
             -t "$image:latest" \
             -t "$image:${GITHUB_REF_NAME}" \
+            -t "$previous_image:sha-${GITHUB_SHA}" \
+            -t "$previous_image:latest" \
+            -t "$previous_image:${GITHUB_REF_NAME}" \
             -t "$legacy_image:sha-${GITHUB_SHA}" \
             -t "$legacy_image:latest" \
             -t "$legacy_image:${GITHUB_REF_NAME}" \
@@ -98,7 +102,7 @@ jobs:
           for identity in 10001:10001 1026:100; do
             runtime_uid=${identity%:*}
             runtime_gid=${identity#*:}
-            storage=/tmp/melodock-smoke/${runtime_uid}
+            storage=/tmp/melokeep-smoke/${runtime_uid}
             sudo mkdir -p "$storage/data/engine" "$storage/music"
             # Reproduce root-owned, non-writable NAS directories and old state.
             sudo touch "$storage/data/engine/old-state"
@@ -108,10 +112,10 @@ jobs:
             if [ "$runtime_uid" != 10001 ]; then
               identity_args=(-e PUID="$runtime_uid" -e PGID="$runtime_gid")
             fi
-            docker run -d --name melodock-smoke -p 127.0.0.1:18765:8765 \
+            docker run -d --name melokeep-smoke -p 127.0.0.1:18765:8765 \
               -v "$storage/data:/data" -v "$storage/music:/music" \
-              -e MELODOCK_USER=smoke -e MELODOCK_PASS=smoke-test-password \
-              "${identity_args[@]}" ghcr.io/agonie0v0/melodock:sha-${GITHUB_SHA}
+              -e MELOKEEP_USER=smoke -e MELOKEEP_PASS=smoke-test-password \
+              "${identity_args[@]}" ghcr.io/agonie0v0/melokeep:sha-${GITHUB_SHA}
             ready=0
             for attempt in $(seq 1 60); do
               if curl --fail --silent http://127.0.0.1:18765/api/health | grep -q '"backend":"original-musicdl"'; then
@@ -120,8 +124,8 @@ jobs:
               fi
               sleep 2
             done
-            docker logs melodock-smoke --tail 30
+            docker logs melokeep-smoke --tail 30
             [ "$ready" = 1 ] || exit 1
-            docker exec --user "$identity" melodock-smoke python -c "import os; from pathlib import Path; s=Path('/proc/1/status').read_text(); assert 'Uid:\t' + '\t'.join(['$runtime_uid'] * 4) in s; assert Path('/data/melodock.db').exists(); Path('/data/engine/old-state').write_text('repaired'); Path('/music/write-check').write_text('ok'); (Path.home() / '.cache').mkdir(parents=True, exist_ok=True); assert os.stat('/data/engine').st_mode & 0o777 == 0o700"
-            docker rm -f melodock-smoke
+            docker exec --user "$identity" melokeep-smoke python -c "import os; from pathlib import Path; s=Path('/proc/1/status').read_text(); assert 'Uid:\t' + '\t'.join(['$runtime_uid'] * 4) in s; assert Path('/data/melokeep.db').exists(); Path('/data/engine/old-state').write_text('repaired'); Path('/music/write-check').write_text('ok'); (Path.home() / '.cache').mkdir(parents=True, exist_ok=True); assert os.stat('/data/engine').st_mode & 0o777 == 0o700"
+            docker rm -f melokeep-smoke
           done

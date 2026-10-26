@@ -1,8 +1,8 @@
 # V2 刮削整理功能对照
 
-依据 [Music Tag Web V2 官方文档](https://xiers-organization.gitbook.io/music-tag-web-v2)及公开仓库中的资料源调研，在 MeloDock 内独立实现刮削整理流程，保留现有 UI 风格、搜索下载和机器人功能。公开仓库默认分支不能据此认定为完整 V2 源码；本实现不依赖激活服务或私有接口，也不宣称与未公开实现逐项相同。
+依据 [Music Tag Web V2 官方文档](https://xiers-organization.gitbook.io/music-tag-web-v2)及公开仓库中的资料源调研，在 MeloKeep 内独立实现刮削整理流程，保留现有 UI 风格、搜索下载和机器人功能。公开仓库默认分支不能据此认定为完整 V2 源码；本实现不依赖激活服务或私有接口，也不宣称与未公开实现逐项相同。
 
-| 工作流 | MeloDock 中的入口与行为 |
+| 工作流 | MeloKeep 中的入口与行为 |
 | --- | --- |
 | 自动刮削与手动候选 | 按设置中保存的来源查询；审核候选、匹配理由、差异与路径；可修改关键词重新搜索 |
 | 丰富资料源 | 网易云、QQ、咪咕、酷狗、酷我；MusicBrainz / Cover Art Archive；AcoustID / Chromaprint 指纹 |

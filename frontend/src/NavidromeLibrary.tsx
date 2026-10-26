@@ -53,18 +53,18 @@ export function NavidromeLibrary({
 }) {
   const [mode, setMode] = useState(() =>
     preference(
-      "melodock-navidrome-mode",
+      "melokeep-navidrome-mode",
       ["songs", "albums", "artists"],
       "songs",
     ),
   );
   const [layout, setLayout] = useState(() =>
-    preference("melodock-navidrome-layout", ["cards", "list"], "list"),
+    preference("melokeep-navidrome-layout", ["cards", "list"], "list"),
   );
   useEffect(() => {
     try {
-      localStorage.setItem("melodock-navidrome-mode", mode);
-      localStorage.setItem("melodock-navidrome-layout", layout);
+      localStorage.setItem("melokeep-navidrome-mode", mode);
+      localStorage.setItem("melokeep-navidrome-layout", layout);
     } catch {
       /* Preferences are optional. */
     }

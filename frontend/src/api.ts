@@ -7,7 +7,7 @@ export async function api<T>(
   const response = await fetch(`/api${path}`, {
     method,
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", "X-MeloDock-Request": "1" },
+    headers: { "Content-Type": "application/json", "X-MeloKeep-Request": "1" },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });
@@ -16,7 +16,7 @@ export async function api<T>(
     .catch(() => ({ detail: "服务未返回有效数据，请检查服务状态" }));
   if (!response.ok) {
     if (response.status === 401)
-      window.dispatchEvent(new Event("melodock-login"));
+      window.dispatchEvent(new Event("melokeep-login"));
     throw new Error(data.detail || `请求失败 (${response.status})`);
   }
   return data as T;

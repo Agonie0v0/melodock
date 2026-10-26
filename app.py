@@ -16,7 +16,7 @@ from legacy import app as original
 from engine_api import install
 
 app = original.app
-app.title = 'MeloDock'
+app.title = 'MeloKeep'
 # Spawned playlist workers must not reopen the API database or recover downloads.
 if __name__ != '__mp_main__':
     install(original, ROOT)

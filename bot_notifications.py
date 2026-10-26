@@ -24,7 +24,7 @@ from error_messages import explain_error
 from telegram_local import LocalBotAPI, LOCAL_URL
 
 
-HELP = ('MeloDock · 功能菜单\n\n'
+HELP = ('MeloKeep · 功能菜单\n\n'
         '搜索音乐\n直接发送歌名或歌手，例如：稻香 周杰伦\n也可发送 /search 稻香 周杰伦\n\n'
         '试听与下载\n切换音源查看结果，点击编号下载。完成后收到音频或原文件；超限时提供下载链接。\n\n'
         '我的任务\n/status 查看进度，并通过按钮继续、取消或获取下载链接。\n\n'
@@ -907,7 +907,7 @@ class BotService:
         if item is None:
             # Verify configuration locally. Webhooks cannot be tested remotely without posting a message.
             return
-        text = 'MeloDock · ' + item['text'] + ('\n' + item['url'] if item.get('url') else '')
+        text = 'MeloKeep · ' + item['text'] + ('\n' + item['url'] if item.get('url') else '')
         body = {'content': text[:2000], 'allowed_mentions': {'parse': []}} if channel == 'discord' else (
             {'msg_type': 'text', 'content': {'text': text}} if channel == 'feishu' else {'msgtype': 'text', 'text': {'content': text}})
         params = {'wait': 'true'} if channel == 'discord' else {}

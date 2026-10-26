@@ -220,10 +220,11 @@ def reset_security_state():
         app.UPDATE_STATE.update(running=False, ok=None, detail='', to=None)
 
 
-def test_unsafe_api_requires_custom_header():
+@pytest.mark.parametrize('header', ['X-MeloKeep-Request', 'X-MeloDock-Request', 'X-Musicdl-Request'])
+def test_unsafe_api_requires_custom_header(header):
     with TestClient(app.app) as client:
         denied = client.post('/api/auth/login', json={'username': 'x', 'password': 'y'})
-        allowed = client.post('/api/auth/login', headers=WRITE_HEADERS,
+        allowed = client.post('/api/auth/login', headers={header: '1'},
                               json={'username': 'x', 'password': 'y'})
     assert denied.status_code == 403
     assert allowed.status_code == 200

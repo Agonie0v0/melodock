@@ -38,7 +38,7 @@ class Navidrome:
         cfg = self.settings()
         if not cfg.get('enabled') or not cfg.get('url'):
             raise HTTPException(409, '请先在设置中配置并启用 Navidrome')
-        params = {'v': '1.16.1', 'c': 'melodock', 'f': 'json'}
+        params = {'v': '1.16.1', 'c': 'melokeep', 'f': 'json'}
         if cfg.get('api_key'):
             params['apiKey'] = cfg['api_key']
         else:

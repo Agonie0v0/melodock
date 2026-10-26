@@ -1,6 +1,6 @@
 # 来源与许可
 
-本项目名为 MeloDock（原名 musicdl）；更名不改变下列上游项目的包名、版权或许可。
+本项目名为 MeloKeep（曾用名 musicdl、MeloDock）；更名不改变下列上游项目的包名、版权或许可。
 
 本项目后端使用 CharlesPikachu/musicdl 2.14.0 的完整 Python 引擎，各音源搜索、解析与下载由该引擎执行。
 

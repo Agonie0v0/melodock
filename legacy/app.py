@@ -194,7 +194,7 @@ def redactlog(message):
         except ValueError:
             return '[地址已隐藏]'
     text = re.sub(r'https?://[^\s<>\'\"]+', hide_url, text)
-    text = re.sub(r'(?im)\b(cookies?|authorization|password|passwd|token|secret|api[_-]?key|MUSICDL_PASS|MELODOCK_PASS)[\'\"]?\s*[:=]\s*[^\n]+',
+    text = re.sub(r'(?im)\b(cookies?|authorization|password|passwd|token|secret|api[_-]?key|MUSICDL_PASS|MELODOCK_PASS|MELOKEEP_PASS)[\'\"]?\s*[:=]\s*[^\n]+',
                   r'\1=[已隐藏]', text)
     return text[:16000]
 
@@ -538,14 +538,14 @@ IS_LOOPBACK_BIND = SERVER_HOST.lower() in {'127.0.0.1', '::1', 'localhost'}
 AUTH_USER = _read_secret('MUSICDL_USER')
 AUTH_PASS = _read_secret('MUSICDL_PASS')
 if bool(AUTH_USER) != bool(AUTH_PASS):
-    raise RuntimeError('MUSICDL_USER 与 MUSICDL_PASS 必须同时设置；拒绝以半配置认证启动')
+    raise RuntimeError('MELOKEEP_USER 与 MELOKEEP_PASS 必须同时设置；拒绝以半配置认证启动')
 AUTH_ENABLED = bool(AUTH_USER and AUTH_PASS)
 if not AUTH_ENABLED and not IS_LOOPBACK_BIND and not _env_flag('MUSICDL_ALLOW_INSECURE_NO_AUTH'):
-    raise RuntimeError('非回环监听必须配置 MUSICDL_USER/MUSICDL_PASS；如明确接受风险可设置 MUSICDL_ALLOW_INSECURE_NO_AUTH=1')
+    raise RuntimeError('非回环监听必须配置 MELOKEEP_USER/MELOKEEP_PASS；如明确接受风险可设置 MELOKEEP_ALLOW_INSECURE_NO_AUTH=1')
 
 AUTH_USER_DIGEST = hashlib.sha256((AUTH_USER or '').encode('utf-8')).digest()
 AUTH_PASS_DIGEST = hashlib.sha256((AUTH_PASS or '').encode('utf-8')).digest()
-SESSION_COOKIE = 'melodock_session'
+SESSION_COOKIE = 'melokeep_session'
 SESSION_TTL = max(300, int(os.environ.get('MUSICDL_SESSION_TTL', '43200')))
 COOKIE_SECURE = _env_flag('MUSICDL_COOKIE_SECURE', default=not IS_LOOPBACK_BIND)
 SESSIONS: dict[str, float] = {}
@@ -597,7 +597,7 @@ async def security_middleware(request: Request, call_next):
     path = request.url.path
     if path.startswith('/api/'):
         if request.method.upper() in UNSAFE_METHODS and not any(
-                request.headers.get(name) == '1' for name in ('x-melodock-request', 'x-musicdl-request')):
+                request.headers.get(name) == '1' for name in ('x-melokeep-request', 'x-melodock-request', 'x-musicdl-request')):
             return JSONResponse(status_code=403, content={'detail': '请求来源校验失败'})
         if AUTH_ENABLED and path not in {'/api/auth/login', '/api/auth/status', '/api/health'}:
             if not _session_valid(request.cookies.get(SESSION_COOKIE)):

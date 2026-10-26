@@ -78,7 +78,7 @@ const bytes = (n: number) =>
 export function App() {
   const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
     try {
-      const saved = localStorage.getItem("melodock-theme");
+      const saved = localStorage.getItem("melokeep-theme");
       return saved === "light" || saved === "dark" ? saved : "system";
     } catch {
       return "system";
@@ -87,7 +87,7 @@ export function App() {
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
       const saved: unknown = JSON.parse(
-        localStorage.getItem("melodock-searches") || "[]",
+        localStorage.getItem("melokeep-searches") || "[]",
       );
       return Array.isArray(saved)
         ? saved.filter((v): v is string => typeof v === "string").slice(0, 8)
@@ -105,7 +105,7 @@ export function App() {
     };
     update();
     try {
-      localStorage.setItem("melodock-theme", theme);
+      localStorage.setItem("melokeep-theme", theme);
     } catch {
       /* Storage is optional. */
     }
@@ -244,7 +244,7 @@ export function App() {
   }
   useEffect(() => {
     const login = () => setLoginRequired(true);
-    window.addEventListener("melodock-login", login);
+    window.addEventListener("melokeep-login", login);
     api<{ authenticated: boolean }>("/auth/status")
       .then((status) => {
         if (status.authenticated) load().catch(fail);
@@ -252,7 +252,7 @@ export function App() {
       })
       .catch(fail);
     return () => {
-      window.removeEventListener("melodock-login", login);
+      window.removeEventListener("melokeep-login", login);
       eventSource.current?.close();
       if (searchJob.current)
         void api(`/search/jobs/${searchJob.current}`, "DELETE").catch(() => {});
@@ -1410,7 +1410,7 @@ export function App() {
         <aside className="sidebar">
           <div className="brand">
             <AudioLines />
-            MeloDock
+            MeloKeep
           </div>
           <div className="sidebar-capsules">
             <Navigation
@@ -1480,7 +1480,7 @@ export function App() {
               <div className="top-actions">
                 <a
                   className="icon-button project-link"
-                  href="https://github.com/Agonie0v0/melodock"
+                  href="https://github.com/Agonie0v0/melokeep"
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="项目地址（在新标签页打开）"
@@ -1536,7 +1536,7 @@ export function App() {
                       <div className="top-actions">
                         <a
                           className="icon-button project-link"
-                          href="https://github.com/Agonie0v0/melodock"
+                          href="https://github.com/Agonie0v0/melokeep"
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label="项目地址（在新标签页打开）"
@@ -1581,7 +1581,7 @@ export function App() {
                             setRecentSearches(history);
                             try {
                               localStorage.setItem(
-                                "melodock-searches",
+                                "melokeep-searches",
                                 JSON.stringify(history),
                               );
                             } catch {
@@ -1640,7 +1640,7 @@ export function App() {
                               onClick={() => {
                                 setRecentSearches([]);
                                 try {
-                                  localStorage.removeItem("melodock-searches");
+                                  localStorage.removeItem("melokeep-searches");
                                 } catch {
                                   /* Storage is optional. */
                                 }
@@ -2676,7 +2676,7 @@ export function App() {
             <header className="login-header">
               <div className="login-brand">
                 <AudioLines aria-hidden="true" />
-                <span>MeloDock</span>
+                <span>MeloKeep</span>
               </div>
               <h2>登录音乐库</h2>
               <p>登录以继续搜索、播放和下载音乐</p>

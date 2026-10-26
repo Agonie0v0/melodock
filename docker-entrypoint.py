@@ -1,4 +1,4 @@
-"""Prepare bind-mounted storage, then run MeloDock as the configured UID/GID."""
+"""Prepare bind-mounted storage, then run MeloKeep as the configured UID/GID."""
 import os
 from pathlib import Path
 import stat

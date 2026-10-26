@@ -1,6 +1,6 @@
 # 下载、刮削、整理与 Navidrome
 
-MeloDock 内置这套功能，运行时不需要 Music Tag Web 容器或激活服务。Music Tag Web V2 是功能参考；本实现没有复制其私有服务，也不代表已实现 V2 全部周边功能。
+MeloKeep 内置这套功能，运行时不需要 Music Tag Web 容器或激活服务。Music Tag Web V2 是功能参考；本实现没有复制其私有服务，也不代表已实现 V2 全部周边功能。
 
 ## 页面分工
 
@@ -80,7 +80,7 @@ ${discnumber.zfill(2) + '_' if discnumber and tracknumber else ''}${tracknumber.
 
 可选择自动应用可靠匹配，或只生成预览。无法确定歌曲/发行版本或识别失败时，在「任务与审核」中处理；可额外配置独立的未匹配/失败目录，转移也保存可恢复记录，留空则保留原处。应用阶段写入失败会回滚当前文件并报告错误，不自动删除失败文件。检查结果及已提交的文件版本持久化，重启后不会重复提交相同版本；改变过的文件可重新处理。转码/分轨输出目录不参与监控导入。
 
-AcoustID 需要在「音频指纹识别」保存[应用 Key](https://acoustid.org/new-application)，或者通过环境变量 `MELODOCK_ACOUSTID_KEY` 提供。配置读取只返回是否存在 Key，不返回内容。来源中勾选 AcoustID 后优先计算前 120 秒指纹，唯一的高置信录音可为其他来源提供搜索关键词；多个发行候选仍进入审核。原生安装还需安装 `fpcalc`，可用 `MELODOCK_FPCALC` 指定可执行文件路径；Docker 镜像已安装 `libchromaprint-tools`。
+AcoustID 需要在「音频指纹识别」保存[应用 Key](https://acoustid.org/new-application)，或者通过环境变量 `MELOKEEP_ACOUSTID_KEY` 提供。配置读取只返回是否存在 Key，不返回内容。来源中勾选 AcoustID 后优先计算前 120 秒指纹，唯一的高置信录音可为其他来源提供搜索关键词；多个发行候选仍进入审核。原生安装还需安装 `fpcalc`，可用 `MELOKEEP_FPCALC` 指定可执行文件路径；Docker 镜像已安装 `libchromaprint-tools`。
 
 ## 音频检查、转码与分轨
 
@@ -88,7 +88,7 @@ AcoustID 需要在「音频指纹识别」保存[应用 Key](https://acoustid.or
 
 转换输出支持 FLAC、MP3、M4A/AAC、Opus、WAV。预览列出输出路径，确认后生成 `原文件名 - converted` 目录；CUE 分轨生成 `原文件名 - tracks` 目录。原件始终保留，输出重名追加序号。转码继承文字标签、封面与歌词；分轨继承专辑、艺术家及 CUE 曲序/标题，不把整轨歌词时间轴直接复制到每个分轨。
 
-CUE 可在窗口粘贴，或使用音频旁的同名 `.cue`，支持 UTF-8 和 GB18030、多 FILE、INDEX 01，最多 1000 轨、1 MB。每个选中音频只处理与其文件名对应的 FILE 段，检查边界递增且不超过音频时长；不读取 CUE 指向的其他路径。需要服务器 FFmpeg，可通过 `MELODOCK_FFMPEG` 指定路径；Docker 镜像已包含。MP3 采样率不高于 48 kHz，Opus 使用其支持的采样率。
+CUE 可在窗口粘贴，或使用音频旁的同名 `.cue`，支持 UTF-8 和 GB18030、多 FILE、INDEX 01，最多 1000 轨、1 MB。每个选中音频只处理与其文件名对应的 FILE 段，检查边界递增且不超过音频时长；不读取 CUE 指向的其他路径。需要服务器 FFmpeg，可通过 `MELOKEEP_FFMPEG` 指定路径；Docker 镜像已包含。MP3 采样率不高于 48 kHz，Opus 使用其支持的采样率。
 
 任务详情可导出 UTF-8 CSV 报告，包含标签前后值、路径、输出文件、检查参数及错误。任务筛选在服务端对全部历史进行，再分页；单曲可查看标签版本并恢复到指定修改前。恢复旧版本前需先处理其后续修改。
 
@@ -110,17 +110,17 @@ CUE 可在窗口粘贴，或使用音频旁的同名 `.cue`，支持 UTF-8 和 G
 
 在「设置 → Navidrome 连接」填写地址、用户名与密码，或者服务支持的 API Key，启用并「保存并测试连接」。密码和 API Key 保存在服务端数据库中，浏览器读取配置只返回是否已保存；媒体链接不包含认证信息。留空保留原凭据，勾选清除后保存可移除旧凭据。
 
-「音乐库 → Navidrome」支持专辑分页与排序、歌手浏览、歌曲和专辑搜索、封面、在线播放和加入待播。无需把 Navidrome 数据库导入 MeloDock。本地文件和远程文件分开管理，远程歌曲不提供本地删除操作。
+「音乐库 → Navidrome」支持专辑分页与排序、歌手浏览、歌曲和专辑搜索、封面、在线播放和加入待播。无需把 Navidrome 数据库导入 MeloKeep。本地文件和远程文件分开管理，远程歌曲不提供本地删除操作。
 
-「整理完成后自动触发扫描」需要 Navidrome 与 MeloDock 访问同一最终目录，并且账号有扫描权限。也可在 Navidrome 页面手动扫描。触发扫描不等于服务已完成索引；扫描失败会显示提示，本地入库结果保留。
+「整理完成后自动触发扫描」需要 Navidrome 与 MeloKeep 访问同一最终目录，并且账号有扫描权限。也可在 Navidrome 页面手动扫描。触发扫描不等于服务已完成索引；扫描失败会显示提示，本地入库结果保留。
 
-现有 Navidrome 可把宿主机 `./music/library` 挂载为其音乐目录。MeloDock 单独部署不要求同时安装 Navidrome；如需一起运行，可参考 [Compose 示例](../docker-compose.navidrome.yml)：
+现有 Navidrome 可把宿主机 `./music/library` 挂载为其音乐目录。MeloKeep 单独部署不要求同时安装 Navidrome；如需一起运行，可参考 [Compose 示例](../docker-compose.navidrome.yml)：
 
 ```sh
 docker compose -f docker-compose.navidrome.yml up -d --build
 ```
 
-示例从当前源码构建 MeloDock，避免误用尚未发布这些功能的 `latest` 镜像。访问 Navidrome 的 `4533` 端口完成初始化，在 MeloDock 中填写 `http://navidrome:4533`，用创建的账号连接。两个服务通过共享最终目录联动，不需要 Music Tag 服务。
+示例从当前源码构建 MeloKeep，避免误用尚未发布这些功能的 `latest` 镜像。访问 Navidrome 的 `4533` 端口完成初始化，在 MeloKeep 中填写 `http://navidrome:4533`，用创建的账号连接。两个服务通过共享最终目录联动，不需要 Music Tag 服务。
 
 测试使用了模拟的 OpenSubsonic HTTP 服务验证认证、专辑浏览、Range 播放和扫描；没有使用你的真实 Navidrome 服务、凭据或曲库。部署后需用实际地址进行连接测试。
 

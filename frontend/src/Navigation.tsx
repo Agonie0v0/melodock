@@ -39,7 +39,7 @@ export function Navigation({
   const [order, setOrder] = useState<NavigationView[]>(() => {
     try {
       const saved: unknown = JSON.parse(
-        localStorage.getItem("melodock-navigation") || "null",
+        localStorage.getItem("melokeep-navigation") || "null",
       );
       if (Array.isArray(saved))
         return [...new Set([...saved, ...defaults])].filter(
@@ -54,7 +54,7 @@ export function Navigation({
   function save(next: NavigationView[]) {
     setOrder(next);
     try {
-      localStorage.setItem("melodock-navigation", JSON.stringify(next));
+      localStorage.setItem("melokeep-navigation", JSON.stringify(next));
     } catch {
       /* Storage may be unavailable. */
     }

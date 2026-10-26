@@ -444,7 +444,7 @@ export function BotSettings() {
             </div>
             <p>
               使用平台生成的 HTTPS
-              Webhook。飞书和钉钉可填写加签密钥；使用关键词校验时允许“MeloDock”。群成员可访问通知中的下载链接，请按需设置链接有效期。
+              Webhook。飞书和钉钉可填写加签密钥；使用关键词校验时允许“MeloKeep”。群成员可访问通知中的下载链接，请按需设置链接有效期。
             </p>
             <button
               type="button"

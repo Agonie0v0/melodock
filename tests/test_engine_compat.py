@@ -27,7 +27,7 @@ import engine_worker
 import engine_api
 from engine_api import SearchBody
 
-HEADERS = {'X-MeloDock-Request': '1'}
+HEADERS = {'X-MeloKeep-Request': '1'}
 
 
 @pytest.mark.parametrize('source', ['QQMusicClient', 'NeteaseMusicClient'])
@@ -245,7 +245,7 @@ def test_import_creates_managed_playlist_with_native_failure_report(monkeypatch)
     assert client.get(f'/api/playlists/{ident}').json()['tracks'] == saved['tracks']
     # Saved collections and complete SongInfo survive outside in-memory results.
     import sqlite3
-    with sqlite3.connect(_root / 'data/melodock.db') as db:
+    with sqlite3.connect(_root / 'data/melokeep.db') as db:
         body = json.loads(db.execute("SELECT body FROM records WHERE kind='collection' AND id=?", (ident,)).fetchone()[0])
         assert body['tracks'][0]['id'] == track['id']
     logs = client.get('/api/logs').json()['logs']
@@ -285,7 +285,7 @@ def test_download_record_management_preserves_audio_and_rejects_active_tasks():
         {'id': 'management-paused', 'status': 'paused', 'track': {'title': 'paused'}},
         {'id': 'management-active', 'status': 'queued', 'track': {'title': 'active'}},
     ]
-    with sqlite3.connect(_root / 'data/melodock.db') as db:
+    with sqlite3.connect(_root / 'data/melokeep.db') as db:
         for record in records:
             db.execute('INSERT INTO records(kind,id,body) VALUES (?,?,?)', ('download', record['id'], json.dumps(record)))
     assert client.delete('/api/downloads/management-active', headers=HEADERS).status_code == 409
@@ -294,7 +294,7 @@ def test_download_record_management_preserves_audio_and_rejects_active_tasks():
     assert client.delete('/api/downloads/management-paused', headers=HEADERS).status_code == 200
     assert not staging.exists()
     assert client.delete('/api/downloads/management-paused', headers=HEADERS).status_code == 404
-    with sqlite3.connect(_root / 'data/melodock.db') as db:
+    with sqlite3.connect(_root / 'data/melokeep.db') as db:
         db.execute("DELETE FROM records WHERE kind='download' AND id='management-active'")
     audio.unlink()
 
@@ -310,7 +310,7 @@ def test_library_deletion_checks_paths_and_clears_download_link():
     lyrics.write_text('lyrics', encoding='utf-8')
     token = json.dumps([str(base), audio.name], ensure_ascii=False)
     job = {'id': 'management-file', 'status': 'complete', 'track': {'title': 'fixture'}, 'file': token}
-    with sqlite3.connect(_root / 'data/melodock.db') as db:
+    with sqlite3.connect(_root / 'data/melokeep.db') as db:
         db.execute('INSERT INTO records(kind,id,body) VALUES (?,?,?)', ('download', job['id'], json.dumps(job)))
     outside = base.parent / 'must-keep.txt'
     outside.write_text('keep', encoding='utf-8')
