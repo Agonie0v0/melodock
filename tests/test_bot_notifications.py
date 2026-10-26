@@ -57,11 +57,11 @@ def test_provider_size_and_transfer_progress():
 def setup_bot(monkeypatch, tmp_path):
     for key in ('TG_TOKEN', 'TG_ALLOWED_USERS', 'TG_PROXY', 'WECOM_CORP_ID', 'WECOM_AGENT_ID',
                 'WECOM_SECRET', 'WECOM_TOKEN', 'WECOM_AES_KEY', 'WECOM_ALLOWED_USERS', 'BOT_SOURCES'):
-        monkeypatch.delenv('MUSICDL_' + key, raising=False)
-    monkeypatch.setenv('MUSICDL_TG_TOKEN', 'test-token')
-    monkeypatch.setenv('MUSICDL_TG_ALLOWED_USERS', '123,456')
-    monkeypatch.setenv('MUSICDL_PUBLIC_URL', 'https://music.example.com')
-    monkeypatch.setenv('MUSICDL_LINK_TTL_SECONDS', '86400')
+        monkeypatch.delenv('MELOKEEP_' + key, raising=False)
+    monkeypatch.setenv('MELOKEEP_TG_TOKEN', 'test-token')
+    monkeypatch.setenv('MELOKEEP_TG_ALLOWED_USERS', '123,456')
+    monkeypatch.setenv('MELOKEEP_PUBLIC_URL', 'https://music.example.com')
+    monkeypatch.setenv('MELOKEEP_LINK_TTL_SECONDS', '86400')
     store = Store()
     track = {'id': 'track1', 'title': '测试音乐', 'artist': '歌手', 'source': 'netease',
              'qualities': [{'id': 'engine:flac:0', 'label': 'FLAC 无损'}]}
@@ -531,11 +531,11 @@ def test_fail_closed_config_and_utf8_message_limit(setup_bot, monkeypatch):
     messages = store.values('bot_outbox')
     assert ''.join(x['text'] for x in messages) == '测试音乐' * 1000
     assert all(len(x['text'].encode()) <= 1800 for x in messages)
-    monkeypatch.setenv('MUSICDL_TG_ALLOWED_USERS', '')
+    monkeypatch.setenv('MELOKEEP_TG_ALLOWED_USERS', '')
     with pytest.raises(ValueError, match='ALLOWED_USERS'):
         type(bot)(store.get, store.put, store.values, store.remove, bot.search, bot.enqueue, bot.control, bot.links.resolve, bot.log)
-    monkeypatch.setenv('MUSICDL_TG_ALLOWED_USERS', '123')
-    monkeypatch.setenv('MUSICDL_PUBLIC_URL', 'ftp://music.example.com')
+    monkeypatch.setenv('MELOKEEP_TG_ALLOWED_USERS', '123')
+    monkeypatch.setenv('MELOKEEP_PUBLIC_URL', 'ftp://music.example.com')
     with pytest.raises(ValueError, match='访问地址'):
         type(bot)(store.get, store.put, store.values, store.remove, bot.search, bot.enqueue, bot.control, bot.links.resolve, bot.log)
 

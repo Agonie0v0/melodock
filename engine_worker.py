@@ -105,7 +105,7 @@ def playlist_issue(message):
 
 def client_for(config, source=None):
     from legacy import app as original
-    config = copy.deepcopy({k: v for k, v in config.items() if not k.startswith('_musicdl_')})
+    config = copy.deepcopy({k: v for k, v in config.items() if not k.startswith('_melokeep_')})
     if source:
         config['music_sources'] = [source]
     key = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
@@ -125,16 +125,16 @@ def search(config, source, keyword, partial_path=None):
     from legacy import app as original
     client = client_for(config, source)
     provider = client.music_clients[source]
-    if cfg_song := config.get('_musicdl_resolve'):
+    if cfg_song := config.get('_melokeep_resolve'):
         songs = provider._resolve_candidate(copy.deepcopy(cfg_song), client.requests_overrides[source])
         for song in songs:
             song.work_dir, song._save_path = provider.work_dir, None
         return songs
-    provider._musicdl_config = hashlib.sha256(json.dumps({k: v for k, v in config.items() if not k.startswith('_musicdl_')}, sort_keys=True).encode()).hexdigest()
-    provider._musicdl_refresh = bool(config.get('_musicdl_refresh'))
-    provider._musicdl_started = time.time()
-    previous_mode = getattr(provider, '_musicdl_candidates', False)
-    provider._musicdl_candidates = bool(config.get('_musicdl_candidates'))
+    provider._melokeep_config = hashlib.sha256(json.dumps({k: v for k, v in config.items() if not k.startswith('_melokeep_')}, sort_keys=True).encode()).hexdigest()
+    provider._melokeep_refresh = bool(config.get('_melokeep_refresh'))
+    provider._melokeep_started = time.time()
+    previous_mode = getattr(provider, '_melokeep_candidates', False)
+    provider._melokeep_candidates = bool(config.get('_melokeep_candidates'))
     original.pushlog('info', f'{source} 搜索参数：每源 {provider.search_size_per_source} 条，'
                      f'每页 {provider.search_size_per_page} 条，严格分页限制 {provider.strict_limit_search_size_per_page}',
                      category='search')
@@ -146,7 +146,7 @@ def search(config, source, keyword, partial_path=None):
         class Results(list):
             def append(self, song):
                 super().append(song)
-                if song.with_valid_download_url or song.raw_data.get('_musicdl_candidate'):
+                if song.with_valid_download_url or song.raw_data.get('_melokeep_candidate'):
                     try:
                         snapshot = copy.copy(song)
                         snapshot.work_dir, snapshot._save_path = provider.work_dir, None
@@ -179,7 +179,7 @@ def search(config, source, keyword, partial_path=None):
             keyword=keyword, num_threadings=client.clients_threadings[source],
             request_overrides=client.requests_overrides[source], rule=client.search_rules[source])
     finally:
-        provider._musicdl_candidates = previous_mode
+        provider._melokeep_candidates = previous_mode
         if partial_path:
             provider._search = native_page
     lossless = sum(str(song.ext).lower() in original.MusicClient.LOSSLESS_QUALITY_DEFINITIONS for song in songs)

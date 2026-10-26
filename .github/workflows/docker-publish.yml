@@ -50,10 +50,9 @@ jobs:
           platforms: ${{ matrix.platform }}
           tags: |
             ghcr.io/agonie0v0/melokeep:sha-${{ github.sha }}-${{ matrix.arch }}
-            ghcr.io/agonie0v0/musicdl:sha-${{ github.sha }}-${{ matrix.arch }}
           build-args: TELEGRAM_BUILD_JOBS=4
-          cache-from: type=gha,scope=musicdl-${{ matrix.arch }}
-          cache-to: type=gha,scope=musicdl-${{ matrix.arch }},mode=max
+          cache-from: type=gha,scope=melokeep-${{ matrix.arch }}
+          cache-to: type=gha,scope=melokeep-${{ matrix.arch }},mode=max
           provenance: mode=max
           sbom: true
 
@@ -81,20 +80,12 @@ jobs:
         run: |
           set -eu
           image=ghcr.io/agonie0v0/melokeep
-          previous_image=ghcr.io/agonie0v0/melodock
-          legacy_image=ghcr.io/agonie0v0/musicdl
           source_amd64="$image:sha-${GITHUB_SHA}-amd64"
           source_arm64="$image:sha-${GITHUB_SHA}-arm64"
           docker buildx imagetools create \
             -t "$image:sha-${GITHUB_SHA}" \
             -t "$image:latest" \
             -t "$image:${GITHUB_REF_NAME}" \
-            -t "$previous_image:sha-${GITHUB_SHA}" \
-            -t "$previous_image:latest" \
-            -t "$previous_image:${GITHUB_REF_NAME}" \
-            -t "$legacy_image:sha-${GITHUB_SHA}" \
-            -t "$legacy_image:latest" \
-            -t "$legacy_image:${GITHUB_REF_NAME}" \
             "$source_amd64" "$source_arm64"
 
       - name: 验证已发布镜像可启动
@@ -118,7 +109,7 @@ jobs:
               "${identity_args[@]}" ghcr.io/agonie0v0/melokeep:sha-${GITHUB_SHA}
             ready=0
             for attempt in $(seq 1 60); do
-              if curl --fail --silent http://127.0.0.1:18765/api/health | grep -q '"backend":"original-musicdl"'; then
+              if curl --fail --silent http://127.0.0.1:18765/api/health | grep -q '"backend":"melokeep"'; then
                 ready=1
                 break
               fi

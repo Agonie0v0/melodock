@@ -1,5 +1,5 @@
 '''
-musicdl WebUI backend
+MeloKeep backend
 Wraps musicdl.MusicClient with a FastAPI server:
 search / playlist parse / download tasks / file management / full settings.
 '''
@@ -50,9 +50,9 @@ from musicdl.musicdl import MusicClient, DEFAULT_MUSIC_SOURCES
 from musicdl.modules import MusicClientBuilder, LoggerHandle
 from musicdl.modules.sources.base import BaseMusicClient
 from musicdl.modules.utils import usedownloadheaderscookies
-from musicdl import __version__ as MUSICDL_VERSION
+from musicdl import __version__ as ENGINE_VERSION
 
-BASE_DIR = Path(os.environ.get('MUSICDL_PROJECT_DIR', Path(__file__).resolve().parent)).resolve()
+BASE_DIR = Path(os.environ.get('MELOKEEP_PROJECT_DIR', Path(__file__).resolve().parent)).resolve()
 # musicdl resolves relative work_dirs against the process cwd — pin it to the project dir
 os.chdir(BASE_DIR)
 
@@ -75,7 +75,7 @@ def _lyrics_mode():
         return 'both'
 
 
-def apply_musicdl_patches():
+def apply_melokeep_patches():
     # 1) stop writing search_results.pkl / download_results.pkl clutter
     try:
         if hasattr(BaseMusicClient, '_savetopkl'):
@@ -124,10 +124,10 @@ def apply_musicdl_patches():
         PATCH_STATUS['lyrics_mode'] = f'skip: {err}'
 
 
-apply_musicdl_patches()
-# MUSICDL_CONFIG lets Docker/NAS persist settings on a mounted volume
-CONFIG_PATH = Path(os.environ.get('MUSICDL_CONFIG', BASE_DIR / 'config.json'))
-_file_root_raw = Path(os.environ.get('MUSICDL_FILE_ROOT') or os.environ.get('MUSICDL_WORKDIR') or BASE_DIR / 'musicdl_outputs')
+apply_melokeep_patches()
+# MELOKEEP_CONFIG lets Docker/NAS persist settings on a mounted volume
+CONFIG_PATH = Path(os.environ.get('MELOKEEP_CONFIG', BASE_DIR / 'config.json'))
+_file_root_raw = Path(os.environ.get('MELOKEEP_FILE_ROOT') or os.environ.get('MELOKEEP_WORKDIR') or BASE_DIR / 'melokeep_outputs')
 FILE_ROOT = (_file_root_raw if _file_root_raw.is_absolute() else BASE_DIR / _file_root_raw).resolve()
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
@@ -149,7 +149,7 @@ SOURCE_CATEGORIES = {
 DEFAULT_CONFIG = {
     'music_sources': list(DEFAULT_MUSIC_SOURCES),
     'global_client_cfg': {
-        # MUSICDL_WORKDIR lets Docker/NAS deployments point straight at a
+        # MELOKEEP_WORKDIR lets Docker/NAS deployments point straight at a
         # navidrome/Jellyfin music library without editing config.json
         'work_dir': str(FILE_ROOT),
         'search_size_per_source': 5,
@@ -194,7 +194,7 @@ def redactlog(message):
         except ValueError:
             return '[地址已隐藏]'
     text = re.sub(r'https?://[^\s<>\'\"]+', hide_url, text)
-    text = re.sub(r'(?im)\b(cookies?|authorization|password|passwd|token|secret|api[_-]?key|MUSICDL_PASS|MELODOCK_PASS|MELOKEEP_PASS)[\'\"]?\s*[:=]\s*[^\n]+',
+    text = re.sub(r'(?im)\b(cookies?|authorization|password|passwd|token|secret|api[_-]?key|MELOKEEP_PASS)[\'\"]?\s*[:=]\s*[^\n]+',
                   r'\1=[已隐藏]', text)
     return text[:16000]
 
@@ -447,7 +447,7 @@ class ClientManager:
 
     '''all work dirs (for the file manager)'''
     def workdirs(self) -> list[Path]:
-        dirs = {self.config['global_client_cfg'].get('work_dir') or 'musicdl_outputs'}
+        dirs = {self.config['global_client_cfg'].get('work_dir') or 'melokeep_outputs'}
         for per_cfg in self.config['init_music_clients_cfg'].values():
             if isinstance(per_cfg, dict) and per_cfg.get('work_dir'):
                 dirs.add(per_cfg['work_dir'])
@@ -467,7 +467,7 @@ TASKS: dict[str, dict] = {}
 TASK_ORDER: list[str] = []
 TASK_LOCK = threading.RLock()
 ACTIVE_SONG_IDS: set[str] = set()
-DOWNLOAD_EXECUTOR = ThreadPoolExecutor(max_workers=max(1, min(4, int(os.environ.get('MUSICDL_MAX_DOWNLOAD_TASKS', '2')))))
+DOWNLOAD_EXECUTOR = ThreadPoolExecutor(max_workers=max(1, min(4, int(os.environ.get('MELOKEEP_MAX_DOWNLOAD_TASKS', '2')))))
 
 
 def registersong(song) -> str:
@@ -509,7 +509,7 @@ def serializesong(sid: str, song) -> dict:
     }
 
 
-app = FastAPI(title='musicdl WebUI')
+app = FastAPI(title='MeloKeep')
 
 
 def _read_secret(name: str) -> str | None:
@@ -533,21 +533,21 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
-SERVER_HOST = os.environ.get('MUSICDL_HOST', '127.0.0.1').strip()
+SERVER_HOST = os.environ.get('MELOKEEP_HOST', '127.0.0.1').strip()
 IS_LOOPBACK_BIND = SERVER_HOST.lower() in {'127.0.0.1', '::1', 'localhost'}
-AUTH_USER = _read_secret('MUSICDL_USER')
-AUTH_PASS = _read_secret('MUSICDL_PASS')
+AUTH_USER = _read_secret('MELOKEEP_USER')
+AUTH_PASS = _read_secret('MELOKEEP_PASS')
 if bool(AUTH_USER) != bool(AUTH_PASS):
     raise RuntimeError('MELOKEEP_USER 与 MELOKEEP_PASS 必须同时设置；拒绝以半配置认证启动')
 AUTH_ENABLED = bool(AUTH_USER and AUTH_PASS)
-if not AUTH_ENABLED and not IS_LOOPBACK_BIND and not _env_flag('MUSICDL_ALLOW_INSECURE_NO_AUTH'):
+if not AUTH_ENABLED and not IS_LOOPBACK_BIND and not _env_flag('MELOKEEP_ALLOW_INSECURE_NO_AUTH'):
     raise RuntimeError('非回环监听必须配置 MELOKEEP_USER/MELOKEEP_PASS；如明确接受风险可设置 MELOKEEP_ALLOW_INSECURE_NO_AUTH=1')
 
 AUTH_USER_DIGEST = hashlib.sha256((AUTH_USER or '').encode('utf-8')).digest()
 AUTH_PASS_DIGEST = hashlib.sha256((AUTH_PASS or '').encode('utf-8')).digest()
 SESSION_COOKIE = 'melokeep_session'
-SESSION_TTL = max(300, int(os.environ.get('MUSICDL_SESSION_TTL', '43200')))
-COOKIE_SECURE = _env_flag('MUSICDL_COOKIE_SECURE', default=not IS_LOOPBACK_BIND)
+SESSION_TTL = max(300, int(os.environ.get('MELOKEEP_SESSION_TTL', '43200')))
+COOKIE_SECURE = _env_flag('MELOKEEP_COOKIE_SECURE', default=not IS_LOOPBACK_BIND)
 SESSIONS: dict[str, float] = {}
 SESSION_LOCK = threading.Lock()
 LOGIN_FAILURES: dict[str, deque] = {}
@@ -596,8 +596,7 @@ def _session_valid(token: str | None) -> bool:
 async def security_middleware(request: Request, call_next):
     path = request.url.path
     if path.startswith('/api/'):
-        if request.method.upper() in UNSAFE_METHODS and not any(
-                request.headers.get(name) == '1' for name in ('x-melokeep-request', 'x-melodock-request', 'x-musicdl-request')):
+        if request.method.upper() in UNSAFE_METHODS and request.headers.get('x-melokeep-request') != '1':
             return JSONResponse(status_code=403, content={'detail': '请求来源校验失败'})
         if AUTH_ENABLED and path not in {'/api/auth/login', '/api/auth/status', '/api/health'}:
             if not _session_valid(request.cookies.get(SESSION_COOKIE)):
@@ -648,14 +647,14 @@ async def raisethreadpool():
     # searches and long-lived audio streams each hold a worker, so raise it.
     import anyio
     anyio.to_thread.current_default_thread_limiter().total_tokens = _bounded_int(
-        os.environ.get('MUSICDL_API_WORKERS'), 50, 10, 100,
+        os.environ.get('MELOKEEP_API_WORKERS'), 50, 10, 100,
     )
     # surface which internal patches took on this musicdl version
     ok = [k for k, v in PATCH_STATUS.items() if v == 'ok']
     skipped = {k: v for k, v in PATCH_STATUS.items() if v != 'ok'}
-    pushlog('info', f'musicdl {MUSICDL_VERSION} · 增强补丁生效: {", ".join(ok) or "无"}')
+    pushlog('info', f'MeloKeep 搜索引擎 {ENGINE_VERSION} · 增强补丁生效: {", ".join(ok) or "无"}')
     if skipped:
-        pushlog('warning', f'以下增强在此 musicdl 版本上未生效（核心功能不受影响）: {skipped}')
+        pushlog('warning', f'以下增强在当前搜索引擎版本上未生效（核心功能不受影响）: {skipped}')
 
 
 class SearchBody(BaseModel):
@@ -704,7 +703,7 @@ def meta():
     leftovers = [s for s in registered if not any(s in names for names in SOURCE_CATEGORIES.values())]
     if leftovers:
         categorized['其他'] = leftovers
-    return {'version': MUSICDL_VERSION, 'categories': categorized, 'default_sources': list(DEFAULT_MUSIC_SOURCES),
+    return {'version': ENGINE_VERSION, 'categories': categorized, 'default_sources': list(DEFAULT_MUSIC_SOURCES),
             'platform': sys.platform, 'is_windows': IS_WINDOWS, 'auth_enabled': AUTH_ENABLED,
             'cookie_secure': COOKIE_SECURE}
 
@@ -713,7 +712,7 @@ def meta():
 def health():
     '''installed musicdl version + which internal enhancements took effect.
     Lets you upgrade musicdl and see at a glance if anything degraded.'''
-    return {'musicdl_version': MUSICDL_VERSION, 'sources_registered': len(MusicClientBuilder.REGISTERED_MODULES),
+    return {'engine_version': ENGINE_VERSION, 'sources_registered': len(MusicClientBuilder.REGISTERED_MODULES),
             'patches': PATCH_STATUS}
 
 
@@ -721,15 +720,15 @@ def _vtuple(v: str) -> tuple:
     return tuple(int(x) for x in re.findall(r'\d+', str(v))[:4])
 
 
-@app.get('/api/musicdl/latest')
-def musicdllatest():
+@app.get('/api/engine/latest')
+def enginelatest():
     '''check PyPI for the newest musicdl (read-only; never installs anything)'''
     try:
         r = pyrequests.get('https://pypi.org/pypi/musicdl/json', timeout=8)
         r.raise_for_status()
         latest = r.json()['info']['version']
-        return {'current': MUSICDL_VERSION, 'latest': latest,
-                'update_available': _vtuple(latest) > _vtuple(MUSICDL_VERSION)}
+        return {'current': ENGINE_VERSION, 'latest': latest,
+                'update_available': _vtuple(latest) > _vtuple(ENGINE_VERSION)}
     except Exception as err:
         raise HTTPException(502, f'查询 PyPI 失败: {err}')
 
@@ -737,7 +736,7 @@ def musicdllatest():
 # --- in-app upgrade: pip install -U musicdl, then restart to load it ---------
 UPDATE_STATE = {'running': False, 'ok': None, 'detail': '', 'to': None}
 UPDATE_LOCK = threading.Lock()
-SELF_UPDATE_ENABLED = _env_flag('MUSICDL_ALLOW_SELF_UPDATE', default=not Path('/.dockerenv').exists())
+SELF_UPDATE_ENABLED = _env_flag('MELOKEEP_ALLOW_SELF_UPDATE', default=not Path('/.dockerenv').exists())
 
 
 def _runupdate():
@@ -759,7 +758,7 @@ def _runupdate():
                 UPDATE_STATE.update(ok=True, to=newv)
         with UPDATE_LOCK:
             update_ok, update_to = UPDATE_STATE['ok'], UPDATE_STATE['to']
-        pushlog('info', f'musicdl 升级: ok={update_ok} to={update_to}')
+        pushlog('info', f'搜索引擎升级: ok={update_ok} to={update_to}')
     except Exception as err:
         with UPDATE_LOCK:
             UPDATE_STATE.update(ok=False, detail=str(err))
@@ -768,8 +767,8 @@ def _runupdate():
             UPDATE_STATE['running'] = False
 
 
-@app.post('/api/musicdl/update')
-def musicdlupdate():
+@app.post('/api/engine/update')
+def engineupdate():
     '''upgrade musicdl in the background (new version loads after restart)'''
     if not SELF_UPDATE_ENABLED:
         raise HTTPException(403, '当前部署已禁用运行时自更新，请通过重建镜像升级')
@@ -781,10 +780,10 @@ def musicdlupdate():
     return {'started': True}
 
 
-@app.get('/api/musicdl/update')
-def musicdlupdatestatus():
+@app.get('/api/engine/update')
+def engineupdatestatus():
     with UPDATE_LOCK:
-        return dict(UPDATE_STATE, current=MUSICDL_VERSION, enabled=SELF_UPDATE_ENABLED)
+        return dict(UPDATE_STATE, current=ENGINE_VERSION, enabled=SELF_UPDATE_ENABLED)
 
 
 @app.post('/api/restart')
@@ -792,7 +791,7 @@ def restartserver():
     '''exit with code 88; start.bat / start.sh loop on 88, Docker restart policy revives'''
     with UPDATE_LOCK:
         if UPDATE_STATE['running']:
-            raise HTTPException(409, 'musicdl 正在升级，完成前不能重启')
+            raise HTTPException(409, '搜索引擎正在升级，完成前不能重启')
     pushlog('info', '收到重启请求，1 秒后重启…')
     threading.Timer(1.0, lambda: os._exit(88)).start()
     return {'ok': True}
@@ -867,7 +866,7 @@ DEFAULT_PLAYLIST_HOSTS = (
     'jamendo.com', 'streetvoice.com', 'ximalaya.com', 'lizhi.fm', 'qingting.fm',
 )
 PLAYLIST_ALLOWED_HOSTS = DEFAULT_PLAYLIST_HOSTS + tuple(
-    item.strip().lower().lstrip('.') for item in os.environ.get('MUSICDL_PLAYLIST_HOSTS', '').split(',') if item.strip()
+    item.strip().lower().lstrip('.') for item in os.environ.get('MELOKEEP_PLAYLIST_HOSTS', '').split(',') if item.strip()
 )
 
 
@@ -943,7 +942,7 @@ def preview_request(client, source, url, options):
         # downloader's compatibility retry only for credential-free audio CDNs.
         compatible_cdn = source == 'KugouMusicClient' and re.fullmatch(r'fs(?:[a-z0-9]*|\.[a-z0-9-]+)\.kugou\.com', host)
         explicit_verification = 'verify' in options and options['verify'] is not False
-        if urlsplit(url).scheme != 'https' or not compatible_cdn or has_credentials or explicit_verification or _env_flag('MUSICDL_PREVIEW_STRICT_TLS'):
+        if urlsplit(url).scheme != 'https' or not compatible_cdn or has_credentials or explicit_verification or _env_flag('MELOKEEP_PREVIEW_STRICT_TLS'):
             raise
         if response is not None:
             response.close()
@@ -1114,7 +1113,7 @@ def applylayout(song, cfg=None):
     '''set song.work_dir per the configured 下载分类方式 (download_layout)'''
     cfg = manager.config if cfg is None else cfg
     layout = cfg.get('download_layout', 'source')
-    base = cfg['global_client_cfg'].get('work_dir') or 'musicdl_outputs'
+    base = cfg['global_client_cfg'].get('work_dir') or 'melokeep_outputs'
     if layout == 'source':
         # Incremental/cached search results may still point at the provider root.
         base = cfg.get('init_music_clients_cfg', {}).get(song.source, {}).get('work_dir') or base
@@ -1490,6 +1489,6 @@ def clearlogs():
 if __name__ == '__main__':
     import uvicorn
     # 0.0.0.0 + env overrides so the same image runs in Docker / on a NAS
-    host = os.environ.get('MUSICDL_HOST', '127.0.0.1')
-    port = int(os.environ.get('MUSICDL_PORT', '8765'))
+    host = os.environ.get('MELOKEEP_HOST', '127.0.0.1')
+    port = int(os.environ.get('MELOKEEP_PORT', '8765'))
     uvicorn.run(app, host=host, port=port)

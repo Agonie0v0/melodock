@@ -150,7 +150,7 @@ def install():
     from musicdl.modules.utils import SongInfoUtils, usedownloadheaderscookies
     from pathvalidate import sanitize_filepath
     original = BaseMusicClient._download
-    if getattr(original, '_musicdl_resumable', False):
+    if getattr(original, '_melokeep_resumable', False):
         return
 
     @usedownloadheaderscookies
@@ -172,5 +172,5 @@ def install():
             self.logger_handle.error(f'HTTP 下载中断：{type(error).__name__}\n{traceback.format_exc()}', disable_print=self.disable_print)
         return results
 
-    download._musicdl_resumable = True
+    download._melokeep_resumable = True
     BaseMusicClient._download = download

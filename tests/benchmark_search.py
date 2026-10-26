@@ -55,9 +55,9 @@ async def benchmark(directory):
 
 
 if __name__ == '__main__':
-    with tempfile.TemporaryDirectory(prefix='musicdl-benchmark-') as folder:
+    with tempfile.TemporaryDirectory(prefix='melokeep-benchmark-') as folder:
         directory = Path(folder)
-        os.environ.update(MUSICDL_PROJECT_DIR=str(ROOT), MUSICDL_CONFIG=str(directory / 'config.json'),
-                          MUSICDL_FILE_ROOT=str(directory / 'music'), MUSICDL_DATA_DIR=str(directory / 'data'),
-                          MUSICDL_USER='', MUSICDL_PASS='')
+        os.environ.update(MELOKEEP_PROJECT_DIR=str(ROOT), MELOKEEP_CONFIG=str(directory / 'config.json'),
+                          MELOKEEP_FILE_ROOT=str(directory / 'music'), MELOKEEP_DATA_DIR=str(directory / 'data'),
+                          MELOKEEP_USER='', MELOKEEP_PASS='')
         asyncio.run(benchmark(directory))

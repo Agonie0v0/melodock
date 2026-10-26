@@ -32,11 +32,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py engine_api.py engine_worker.py search_runtime.py provider_compat.py local_library.py library_pipeline.py library_rules.py audio_tools.py metadata_scraper.py navidrome.py resumable_download.py bot_notifications.py telegram_local.py error_messages.py runtime_config.py docker-entrypoint.py ./
 COPY legacy/app.py ./legacy/app.py
 COPY --from=frontend /build/frontend/dist /app/frontend/dist
-COPY LICENSE-musicsquare LICENSE-musicdl-reference /licenses/
+COPY LICENSE-musicsquare LICENSE-search-engine /licenses/
 COPY --from=telegram-api /opt/telegram/bin/telegram-bot-api /usr/local/bin/telegram-bot-api
 COPY --from=telegram-api /src/LICENSE_1_0.txt /licenses/LICENSE-telegram-bot-api
 RUN telegram-bot-api --version
-ENV HOME=/data/home MUSICDL_BIND=0.0.0.0 MUSICDL_HOST=0.0.0.0 MUSICDL_PORT=8765 MUSICDL_DOWNLOAD_DIR=/music MUSICDL_DATA_DIR=/data MUSICDL_CONFIG=/data/config.json MUSICDL_COOKIE_SECURE=0
+ENV HOME=/data/home MELOKEEP_CONTAINER=1
 EXPOSE 8765
 VOLUME ["/music", "/data"]
 ENTRYPOINT ["python", "/app/docker-entrypoint.py"]

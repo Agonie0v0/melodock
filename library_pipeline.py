@@ -25,7 +25,7 @@ from navidrome import Navidrome, NavidromeSettings
 import audio_tools
 import library_rules
 
-INTERNAL_DIRS = {'.partial', '.processing', '.originals', '.musicdl-history'}
+INTERNAL_DIRS = {'.partial', '.processing', '.originals', '.melokeep-history'}
 ACTIVE = {'queued', 'identifying', 'tagging', 'organizing', 'indexing', 'restoring'}
 TEMPLATE_FIELDS = library_rules.VARIABLES
 Source = Literal['netease', 'qq', 'musicbrainz', 'migu', 'kugou', 'kuwo', 'acoustid']
@@ -192,7 +192,7 @@ class LibraryPipeline:
     def public_settings(self):
         nav = self.nav_settings()
         return {**self.settings(), 'file_root': str(self.old.FILE_ROOT), 'metadata_sources': SOURCE_CATALOG,
-                'has_acoustid_key': bool(self.scraper.credentials().get('acoustid_key') or os.getenv('MUSICDL_ACOUSTID_KEY')),
+                'has_acoustid_key': bool(self.scraper.credentials().get('acoustid_key') or os.getenv('MELOKEEP_ACOUSTID_KEY')),
                 'tools': {tool: audio_tools.available(tool) for tool in ('ffmpeg', 'fpcalc')},
                 'navidrome': {**{k: v for k, v in nav.items() if k not in {'password', 'api_key'}},
                               'has_password': bool(nav.get('password')), 'has_api_key': bool(nav.get('api_key'))}}
@@ -221,7 +221,7 @@ class LibraryPipeline:
         resolved = path.resolve()
         if path.is_symlink() or not any(resolved.is_relative_to(root.resolve()) for root in self.roots()):
             raise HTTPException(403, '文件不在允许的音乐目录内')
-        if any(part in INTERNAL_DIRS or part.startswith('.musicdl-') for part in path.parts) and not internal:
+        if any(part in INTERNAL_DIRS or part.startswith('.melokeep-') for part in path.parts) and not internal:
             raise HTTPException(403, '不能操作下载或处理中的内部文件')
         if must_exist and not resolved.is_file():
             raise HTTPException(404, '文件不存在')
@@ -300,7 +300,7 @@ class LibraryPipeline:
             if not root.is_dir():
                 continue
             for directory, folders, names in os.walk(root, followlinks=False):
-                folders[:] = [name for name in folders if name not in INTERNAL_DIRS and not name.startswith('.musicdl-') and not (Path(directory) / name).is_symlink()]
+                folders[:] = [name for name in folders if name not in INTERNAL_DIRS and not name.startswith('.melokeep-') and not (Path(directory) / name).is_symlink()]
                 for name in names:
                     path = Path(directory) / name
                     if name.startswith('.') or path.suffix.lower() in {'.pkl', '.part'} or path.is_symlink():
@@ -829,7 +829,7 @@ class LibraryPipeline:
 
     def publish(self, job, item, source, target, lyrics, cover):
         self.validate_path(target, must_exist=False)
-        history = self.old.FILE_ROOT / '.musicdl-history' / job['id'] / item['id']
+        history = self.old.FILE_ROOT / '.melokeep-history' / job['id'] / item['id']
         if not history.resolve().is_relative_to(self.old.FILE_ROOT.resolve()):
             raise ValueError('原件备份目录超出音乐根目录')
         history.mkdir(parents=True, exist_ok=True)
@@ -839,7 +839,7 @@ class LibraryPipeline:
         for file in companions:
             shutil.copy2(file, history / file.name)
         target.parent.mkdir(parents=True, exist_ok=True)
-        stage = target.parent / ('.musicdl-publish-' + uuid.uuid4().hex + source.suffix)
+        stage = target.parent / ('.melokeep-publish-' + uuid.uuid4().hex + source.suffix)
         operation = {'id': job['id'] + ':' + item['id'], 'job_id': job['id'], 'asset_id': item['id'],
                      'source': str(source), 'target': str(target), 'backup': str(backup), 'stage': str(stage),
                      'companions': [], 'outputs': [], 'state': 'preparing', 'created_at': int(time.time()),
@@ -875,7 +875,7 @@ class LibraryPipeline:
                 if dest.exists() and not any(str(p) == filename for p in companions):
                     raise ValueError('附属文件重名，请重新预览整理路径')
                 operation['outputs'].append({'path': filename, 'hash': hashlib.sha256(content).hexdigest(),
-                                             'stage': str(dest.with_name('.musicdl-sidecar-' + uuid.uuid4().hex)),
+                                             'stage': str(dest.with_name('.melokeep-sidecar-' + uuid.uuid4().hex)),
                                              'preexisting': dest.exists()})
             operation.update(state='publishing', output_hash=digest(stage))
             self.put('library_operation', operation['id'], operation)
@@ -931,7 +931,7 @@ class LibraryPipeline:
             for output in item['outputs']:
                 target = self.validate_path(output['path'], must_exist=False)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                stage = target.with_name('.musicdl-audio-' + uuid.uuid4().hex + target.suffix)
+                stage = target.with_name('.melokeep-audio-' + uuid.uuid4().hex + target.suffix)
                 record = {'path': str(target), 'stage': str(stage), 'published': False}
                 operation['outputs'].append(record)
                 self.put('library_operation', operation['id'], operation)
@@ -1008,7 +1008,7 @@ class LibraryPipeline:
         source, target, backup = (Path(operation[key]) for key in ('source', 'target', 'backup'))
         self.validate_path(source, internal=True, must_exist=False)
         self.validate_path(target, internal=True, must_exist=False)
-        if not backup.resolve().is_relative_to((self.old.FILE_ROOT / '.musicdl-history').resolve()) or not backup.is_file():
+        if not backup.resolve().is_relative_to((self.old.FILE_ROOT / '.melokeep-history').resolve()) or not backup.is_file():
             raise ValueError('原件备份不存在，已保留当前文件')
         # A failed or interrupted publish is reverted only when its output still matches.
         stage = Path(operation['stage'])
@@ -1037,7 +1037,7 @@ class LibraryPipeline:
             if source != target and original.exists() and saved.is_file() and digest(original) != digest(saved):
                 raise ValueError('原目录的歌词或封面已有其他内容，无法自动恢复')
         source.parent.mkdir(parents=True, exist_ok=True)
-        temporary = source.with_name('.musicdl-restore-' + uuid.uuid4().hex + source.suffix)
+        temporary = source.with_name('.melokeep-restore-' + uuid.uuid4().hex + source.suffix)
         try:
             shutil.copy2(backup, temporary)
             os.replace(temporary, source)
@@ -1101,7 +1101,7 @@ class LibraryPipeline:
             elif operation['state'] in {'complete', 'restored'} and operation.get('expires_at', 0) < time.time():
                 if operation.get('kind') == 'derived': continue
                 backup_dir = Path(operation['backup']).parent
-                history = (self.old.FILE_ROOT / '.musicdl-history').resolve()
+                history = (self.old.FILE_ROOT / '.melokeep-history').resolve()
                 if history.is_relative_to(self.old.FILE_ROOT.resolve()) and backup_dir.resolve().is_relative_to(history) and not backup_dir.is_symlink():
                     shutil.rmtree(backup_dir, ignore_errors=True)
         for job in self.values('library_job'):

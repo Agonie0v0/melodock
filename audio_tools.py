@@ -11,10 +11,10 @@ FORMATS = {'flac': ['-c:a', 'flac'], 'mp3': ['-c:a', 'libmp3lame'],
 
 
 def executable(name):
-    configured = os.getenv('MUSICDL_' + name.upper())
+    configured = os.getenv('MELOKEEP_' + name.upper())
     value = shutil.which(configured or name)
     if configured and not value:
-        raise ValueError(f'配置的 {name} 路径不可用，请检查 MUSICDL_{name.upper()}')
+        raise ValueError(f'配置的 {name} 路径不可用，请检查 MELOKEEP_{name.upper()}')
     if not value and name == 'ffmpeg':
         try:
             import imageio_ffmpeg
@@ -22,7 +22,7 @@ def executable(name):
         except ImportError:
             pass
     if not value:
-        raise ValueError(f'未找到 {name}，请安装后配置 MUSICDL_{name.upper()}')
+        raise ValueError(f'未找到 {name}，请安装后配置 MELOKEEP_{name.upper()}')
     return value
 
 

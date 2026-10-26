@@ -110,7 +110,7 @@ class SearchCoordinator:
 
     async def run(self, cfg, source, keyword, publish=None, refresh=False):
         # Refresh controls invalidation; it must not create a separate cache key.
-        cache_config = {k: v for k, v in cfg.items() if k != '_musicdl_refresh'}
+        cache_config = {k: v for k, v in cfg.items() if k != '_melokeep_refresh'}
         key = hashlib.sha256(json.dumps([cache_config, source, keyword.strip()], sort_keys=True).encode()).hexdigest()
         now = time.monotonic()
         for cached_key, (until, payload) in list(self.cache.items()):

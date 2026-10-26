@@ -164,7 +164,7 @@ def xml_fields(raw):
 class WecomCrypt:
     def __init__(self, token, aes_key, corp_id):
         if len(aes_key) != 43:
-            raise ValueError('MUSICDL_WECOM_AES_KEY 必须为 43 位 EncodingAESKey')
+            raise ValueError('MELOKEEP_WECOM_AES_KEY 必须为 43 位 EncodingAESKey')
         self.key = base64.b64decode(aes_key + '=', validate=True)
         if len(self.key) != 32:
             raise ValueError('无效的 EncodingAESKey')
@@ -236,7 +236,7 @@ class BotService:
         self.search, self.enqueue, self.control, self.log = search, enqueue, control, log
         self.search_progress = search_progress
         self.resolve, self.source_catalog = resolve, source_catalog
-        self.config = {key: os.environ.get('MUSICDL_' + key.upper(), default) for key, default in CONFIG_DEFAULTS.items()}
+        self.config = {key: os.environ.get('MELOKEEP_' + key.upper(), default) for key, default in CONFIG_DEFAULTS.items()}
         self.config.update(get('bot_setting', 'config', {}) if config is None else config)
         cfg = self.config
         self.local_api = local_api or LocalBotAPI(log)
@@ -284,7 +284,7 @@ class BotService:
             if cfg['tg_local_enabled']:
                 self.local_api.credentials(cfg)
             if not test_channel and (not self.tg_users or any(not re.fullmatch(r'[1-9][0-9]*', u) for u in self.tg_users)):
-                raise ValueError('请配置 MUSICDL_TG_ALLOWED_USERS（Telegram 数字用户 ID 白名单）')
+                raise ValueError('请配置 MELOKEEP_TG_ALLOWED_USERS（Telegram 数字用户 ID 白名单）')
         if cfg['wecom_enabled']:
             if not self.corp or not self.agent.isdigit() or not self.secret:
                 raise ValueError('企业微信需要 CorpID、AgentID 和 Secret')
@@ -293,7 +293,7 @@ class BotService:
                     raise ValueError('企业微信需要访问地址以生成消息回调 URL')
                 token = cfg['wecom_token'].strip()
                 if not token:
-                    raise ValueError('请配置 MUSICDL_WECOM_TOKEN')
+                    raise ValueError('请配置 MELOKEEP_WECOM_TOKEN')
                 self.crypt = WecomCrypt(token, cfg['wecom_aes_key'].strip(), self.corp)
         ttl = int(cfg['link_ttl_seconds']) if not test_channel else 86400
         if not 60 <= ttl <= 604800:

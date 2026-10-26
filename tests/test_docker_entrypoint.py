@@ -13,9 +13,10 @@ spec.loader.exec_module(entrypoint)
 
 
 def configure(monkeypatch, tmp_path, uid=0, gid=0):
-    monkeypatch.setenv('MUSICDL_DATA_DIR', str(tmp_path / 'data'))
-    monkeypatch.setenv('MUSICDL_DOWNLOAD_DIR', str(tmp_path / 'music'))
-    monkeypatch.delenv('MUSICDL_FILE_ROOT', raising=False)
+    monkeypatch.setattr(entrypoint, '__file__', str(tmp_path / 'docker-entrypoint.py'))
+    monkeypatch.setenv('MELOKEEP_DATA_DIR', str(tmp_path / 'data'))
+    monkeypatch.setenv('MELOKEEP_DOWNLOAD_DIR', str(tmp_path / 'music'))
+    monkeypatch.delenv('MELOKEEP_FILE_ROOT', raising=False)
     monkeypatch.delenv('PUID', raising=False)
     monkeypatch.delenv('PGID', raising=False)
     monkeypatch.setattr(os, 'getuid', lambda: uid, raising=False)

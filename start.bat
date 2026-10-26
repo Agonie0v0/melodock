@@ -31,14 +31,14 @@ goto failed
 echo Node.js is required to build the frontend from source.
 goto failed
 :failed
-set "musicdl_exit=1"
+set "melokeep_exit=1"
 goto report
 :finished
-set "musicdl_exit=%errorlevel%"
+set "melokeep_exit=%errorlevel%"
 :report
-if not "%musicdl_exit%"=="0" (
+if not "%melokeep_exit%"=="0" (
   echo.
   echo Startup failed. See the error above and logs\startup.log.
   pause
 )
-exit /b %musicdl_exit%
+exit /b %melokeep_exit%

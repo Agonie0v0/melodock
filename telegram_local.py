@@ -22,7 +22,7 @@ class LocalBotAPI:
 
     @staticmethod
     def binary():
-        return shutil.which(os.environ.get('MUSICDL_TG_LOCAL_BINARY', 'telegram-bot-api'))
+        return shutil.which(os.environ.get('MELOKEEP_TG_LOCAL_BINARY', 'telegram-bot-api'))
 
     @staticmethod
     def credentials(config):
@@ -57,7 +57,7 @@ class LocalBotAPI:
                 probe.bind(('127.0.0.1', 8081))
             except OSError:
                 raise ValueError('内置 Telegram 服务端口 8081 已被占用，请停止冲突服务或使用自建 API 地址') from None
-        data = Path(os.environ.get('MUSICDL_DATA_DIR', Path(__file__).resolve().parent / 'data')) / 'telegram-bot-api'
+        data = Path(os.environ.get('MELOKEEP_DATA_DIR', Path(__file__).resolve().parent / 'data')) / 'telegram-bot-api'
         data.mkdir(parents=True, exist_ok=True)
         (data / 'temp').mkdir(exist_ok=True)
         if os.name != 'nt':

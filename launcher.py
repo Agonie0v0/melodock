@@ -10,7 +10,7 @@ import sys
 import urllib.error
 import urllib.request
 import webbrowser
-from runtime_config import apply_environment_aliases
+from runtime_config import initialize_environment
 
 ROOT = Path(__file__).resolve().parent
 
@@ -25,7 +25,7 @@ def service_status(host, port):
         with opener.open(url + '/api/health', timeout=2) as response:
             health = json.load(response)
         if isinstance(health, dict) and health.get('ok') is True:
-            if health.get('backend') == 'original-musicdl':
+            if health.get('backend') == 'melokeep':
                 return 'running', url
             if health.get('backend') == 'rust':
                 return 'old-version', url
@@ -51,22 +51,20 @@ def main():
     file_log.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
     logger.addHandler(file_log)
     try:
-        from dotenv import load_dotenv
-        load_dotenv(ROOT / '.env')
-        apply_environment_aliases()
-        host = os.environ.get('MUSICDL_HOST') or os.environ.get('MUSICDL_BIND', '127.0.0.1')
-        port = int(os.environ.get('MUSICDL_PORT', '8765'))
+        initialize_environment(ROOT)
+        host = os.environ.get('MELOKEEP_HOST') or os.environ.get('MELOKEEP_BIND', '127.0.0.1')
+        port = int(os.environ.get('MELOKEEP_PORT', '8765'))
         if not 1 <= port <= 65535:
             raise ValueError('MELOKEEP_PORT 必须在 1–65535 之间')
         status, url = service_status(host, port)
         if status == 'running':
             logger.info('MeloKeep 已在运行：%s。正在打开现有服务，不会重复启动。', url)
-            if os.environ.get('MUSICDL_NO_BROWSER') != '1':
+            if os.environ.get('MELOKEEP_NO_BROWSER') != '1':
                 webbrowser.open(url)
             return 0
         if status in {'occupied', 'old-version'}:
             logger.error('端口 %s 已被%s占用。请关闭该程序，或在 .env 中设置其他 MELOKEEP_PORT 后重试。',
-                         port, '旧 Rust 版 musicdl' if status == 'old-version' else '其他程序')
+                         port, '旧版服务' if status == 'old-version' else '其他程序')
             return 1
         logger.info('正在启动 MeloKeep：%s；启动日志：%s', url, logs / 'startup.log')
         with subprocess.Popen([sys.executable, '-u', str(ROOT / 'app.py')], cwd=ROOT,

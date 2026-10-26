@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from legacy import app
 
 
-WRITE_HEADERS = {'X-MusicDL-Request': '1'}
+WRITE_HEADERS = {'X-MeloKeep-Request': '1'}
 
 
 def test_audio_disconnect_logs_original_error_and_byte_count(monkeypatch):
@@ -160,7 +160,7 @@ def test_kugou_certificate_retry_is_scoped_to_public_audio_cdn(monkeypatch, host
     from unittest.mock import Mock
     response = Mock()
     provider = SimpleNamespace(default_download_headers={}, default_download_cookies={}, get=Mock(side_effect=[None, response]))
-    monkeypatch.setenv('MUSICDL_PREVIEW_STRICT_TLS', '1' if strict else '0')
+    monkeypatch.setenv('MELOKEEP_PREVIEW_STRICT_TLS', '1' if strict else '0')
     options = {'headers': {'Range': 'bytes=0-'}, 'cookies': cookies}
     if compatible:
         assert app.preview_request(provider, 'KugouMusicClient', f'https://{host}/file.flac', options) is response
@@ -201,7 +201,7 @@ def test_certificate_compatibility_never_overrides_credentials_or_explicit_trust
     from unittest.mock import Mock
     provider = SimpleNamespace(default_download_headers={}, default_download_cookies={},
                                session=session, get=Mock(return_value=None))
-    monkeypatch.setenv('MUSICDL_PREVIEW_STRICT_TLS', '0')
+    monkeypatch.setenv('MELOKEEP_PREVIEW_STRICT_TLS', '0')
     with pytest.raises(RuntimeError):
         app.preview_request(provider, 'KugouMusicClient', 'https://fs.youthandroid2.kugou.com/audio.flac', options)
     provider.get.assert_called_once()
@@ -220,8 +220,8 @@ def reset_security_state():
         app.UPDATE_STATE.update(running=False, ok=None, detail='', to=None)
 
 
-@pytest.mark.parametrize('header', ['X-MeloKeep-Request', 'X-MeloDock-Request', 'X-Musicdl-Request'])
-def test_unsafe_api_requires_custom_header(header):
+def test_unsafe_api_requires_custom_header():
+    header = 'X-MeloKeep-Request'
     with TestClient(app.app) as client:
         denied = client.post('/api/auth/login', json={'username': 'x', 'password': 'y'})
         allowed = client.post('/api/auth/login', headers={header: '1'},
@@ -350,8 +350,8 @@ def test_expired_download_id_is_rejected_synchronously(monkeypatch):
 def test_update_check_and_set_is_mutexed(monkeypatch):
     monkeypatch.setattr(app, 'SELF_UPDATE_ENABLED', True)
     monkeypatch.setattr(app, '_runupdate', lambda: None)
-    first = app.musicdlupdate()
-    second = app.musicdlupdate()
+    first = app.engineupdate()
+    second = app.engineupdate()
     assert first == {'started': True}
     assert second == {'started': False, 'running': True}
 
@@ -497,14 +497,14 @@ def test_config_rolls_back_when_persistence_fails(monkeypatch):
 )
 def test_non_loopback_auth_configuration_fails_closed(username, password, expected):
     env = os.environ.copy()
-    for name in ('MUSICDL_USER', 'MUSICDL_PASS', 'MUSICDL_USER_FILE', 'MUSICDL_PASS_FILE',
-                 'MUSICDL_ALLOW_INSECURE_NO_AUTH'):
+    for name in ('MELOKEEP_USER', 'MELOKEEP_PASS', 'MELOKEEP_USER_FILE', 'MELOKEEP_PASS_FILE',
+                 'MELOKEEP_ALLOW_INSECURE_NO_AUTH'):
         env.pop(name, None)
     if username:
-        env['MUSICDL_USER'] = username
+        env['MELOKEEP_USER'] = username
     if password:
-        env['MUSICDL_PASS'] = password
-    env['MUSICDL_HOST'] = '0.0.0.0'
+        env['MELOKEEP_PASS'] = password
+    env['MELOKEEP_HOST'] = '0.0.0.0'
     env['PYTHONUTF8'] = '1'
     env['PYTHONIOENCODING'] = 'utf-8'
     result = subprocess.run(

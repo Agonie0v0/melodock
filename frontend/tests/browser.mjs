@@ -25,11 +25,7 @@ try {
   }
   browser = await chromium.launch({
     headless: true,
-    executablePath:
-      process.env.MELOKEEP_BROWSER_EXECUTABLE ||
-      process.env.MELODOCK_BROWSER_EXECUTABLE ||
-      process.env.MUSICDL_BROWSER_EXECUTABLE ||
-      undefined,
+    executablePath: process.env.MELOKEEP_BROWSER_EXECUTABLE || undefined,
   });
   const page = await browser.newPage({
       viewport: { width: 1440, height: 1000 },
@@ -87,7 +83,7 @@ try {
     },
   };
   const cfg = {
-    engine: "musicdl test fixture",
+    engine: "MeloKeep test fixture",
     available_sources: [
       { id: "netease", label: "网易云" },
       { id: "migu", label: "咪咕" },
@@ -812,9 +808,20 @@ try {
       localStorage.getItem("musicdl-navidrome-layout"),
       localStorage.getItem("melodock-navidrome-mode"),
       localStorage.getItem("melokeep-navidrome-mode"),
+      localStorage.getItem("melokeep-naming-version"),
     ]),
-    ["system", null, "list", null, null, null, "songs"],
+    ["system", null, "list", null, null, null, "songs", "1"],
   );
+  await page.evaluate(() => {
+    localStorage.removeItem("melokeep-theme");
+    localStorage.setItem("musicdl-theme", "dark");
+  });
+  await page.reload();
+  await expect(page).toHaveTitle("MeloKeep");
+  await page.waitForFunction(
+    () => localStorage.getItem("melokeep-theme") === "system",
+  );
+  await page.evaluate(() => localStorage.removeItem("musicdl-theme"));
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForFunction(
     () => document.documentElement.dataset.theme === "dark",

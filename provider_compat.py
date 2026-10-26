@@ -71,9 +71,9 @@ for parser_func in parsers:
     with suppress(Exception):
         candidate = parser_func(search_result, request_overrides)
     if candidate is not None and candidate.with_valid_download_url and candidate.ext in AudioLinkTester.VALID_AUDIO_EXTS:
-        if not song_info_flac.with_valid_download_url or _musicdl_audio_rank(candidate) > _musicdl_audio_rank(song_info_flac):
+        if not song_info_flac.with_valid_download_url or _melokeep_audio_rank(candidate) > _melokeep_audio_rank(song_info_flac):
             song_info_flac = candidate
-        if _musicdl_audio_rank(candidate)[0]:
+        if _melokeep_audio_rank(candidate)[0]:
             break
 ''').body[0]
     ast.increment_lineno(replacement, loop.lineno - replacement.lineno)
@@ -435,12 +435,12 @@ if not song_info.with_valid_download_url:
                 and any(isinstance(part, ast.NamedExpr) and isinstance(part.target, ast.Name)
                         and part.target.id == 'download_url' for part in ast.walk(node.test))):
             # Missing master audio must not hide the following lossless qualities.
-            node.body = ast.parse('_musicdl_qq_quality_missing(self, download_result, music_quality)\ncontinue').body
+            node.body = ast.parse('_melokeep_qq_quality_missing(self, download_result, music_quality)\ncontinue').body
 
 
 def candidate_rows(provider, rows, songs):
     """Return native rows normally; candidate searches skip all audio parsers."""
-    if not getattr(provider, '_musicdl_candidates', False):
+    if not getattr(provider, '_melokeep_candidates', False):
         return rows
     from musicdl.modules import SongInfo
     for row in rows:
@@ -456,10 +456,10 @@ def candidate_rows(provider, rows, songs):
                         album=album.get('title') or album.get('name') or row.get('albumname') or '',
                         duration_s=int(row.get('interval') or 0) if qq else int((row.get('duration') or row.get('dt') or 0) / 1000),
                         cover_url=album.get('picUrl') or '',
-                        raw_data={'search': copy.deepcopy(row), '_musicdl_candidate': True,
-                                  '_musicdl_config': getattr(provider, '_musicdl_config', ''),
-                                  '_musicdl_refresh': getattr(provider, '_musicdl_refresh', False),
-                                  '_musicdl_started': getattr(provider, '_musicdl_started', time.time())})
+                        raw_data={'search': copy.deepcopy(row), '_melokeep_candidate': True,
+                                  '_melokeep_config': getattr(provider, '_melokeep_config', ''),
+                                  '_melokeep_refresh': getattr(provider, '_melokeep_refresh', False),
+                                  '_melokeep_started': getattr(provider, '_melokeep_started', time.time())})
         song.work_dir = provider.work_dir
         songs.append(song)
         if len(songs) >= provider.search_size_per_page:
@@ -484,10 +484,10 @@ def lazy_search_methods(tree, namespace):
                      *ast.parse('return song_infos').body]
     resolver.decorator_list = copy.deepcopy(function.decorator_list)
     tree.body.append(resolver)
-    loop.iter.args[0] = ast.Call(func=ast.Name(id='_musicdl_candidate_rows', ctx=ast.Load()),
+    loop.iter.args[0] = ast.Call(func=ast.Name(id='_melokeep_candidate_rows', ctx=ast.Load()),
                                 args=[ast.Name(id='self', ctx=ast.Load()), loop.iter.args[0],
                                       ast.Name(id='song_infos', ctx=ast.Load())], keywords=[])
-    namespace['_musicdl_candidate_rows'] = candidate_rows
+    namespace['_melokeep_candidate_rows'] = candidate_rows
 
 
 def compile_native(native, *, dispatcher=False, source=None, qq_search_log=None, qq_quality_log=None, lazy_search=False, target_name=None):
@@ -501,17 +501,17 @@ def compile_native(native, *, dispatcher=False, source=None, qq_search_log=None,
         recover_qq_quality_loop(tree)
     if dispatcher:
         prefer_lossless(tree, source=source)
-    namespace = dict(native.__globals__, _musicdl_audio_rank=audio_rank)
+    namespace = dict(native.__globals__, _melokeep_audio_rank=audio_rank)
     if qq_quality_log is not None:
-        namespace['_musicdl_qq_quality_missing'] = functools.partial(qq_quality_missing, parser=target_name or native.__name__, log=qq_quality_log)
+        namespace['_melokeep_qq_quality_missing'] = functools.partial(qq_quality_missing, parser=target_name or native.__name__, log=qq_quality_log)
     if qq_search_log is not None:
         loop = next(n for n in ast.walk(tree) if isinstance(n, ast.For)
                     and isinstance(n.iter, ast.Call) and isinstance(n.iter.func, ast.Name)
                     and n.iter.func.id == 'enumerate' and 'item_song' in ast.unparse(n.iter))
-        loop.iter.args[0] = ast.Call(func=ast.Name(id='_musicdl_qq_search_results', ctx=ast.Load()),
+        loop.iter.args[0] = ast.Call(func=ast.Name(id='_melokeep_qq_search_results', ctx=ast.Load()),
                                     args=[ast.Name(id=name, ctx=ast.Load()) for name in
                                           ('self', 'resp', 'search_meta', 'request_overrides', 'page_no')], keywords=[])
-        namespace['_musicdl_qq_search_results'] = functools.partial(qq_search_results, log=qq_search_log)
+        namespace['_melokeep_qq_search_results'] = functools.partial(qq_search_results, log=qq_search_log)
     if lazy_search:
         lazy_search_methods(tree, namespace)
     tree = ast.increment_lineno(ast.fix_missing_locations(tree), start - 1)
@@ -555,7 +555,7 @@ def install(log):
     for cls in (kugou.KugouMusicClient, kuwo.KuwoMusicClient,
                 qq.QQMusicClient, netease.NeteaseMusicClient):
         try:
-            if getattr(cls, '_musicdl_audio_compat', False):
+            if getattr(cls, '_melokeep_audio_compat', False):
                 status[cls.source] = 'ok'
                 continue
             # Compile first: changed upstream code cannot leave a half-patched source.
@@ -586,7 +586,7 @@ def install(log):
             methods['_removeduplicates'] = keep_quality_variants
             for name, method in methods.items():
                 setattr(cls, name, method)
-            cls._musicdl_audio_compat = True
+            cls._melokeep_audio_compat = True
             status[cls.source] = 'ok'
         except Exception as error:
             status[cls.source] = f'skip: {type(error).__name__}'

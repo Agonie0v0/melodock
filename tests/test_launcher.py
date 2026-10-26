@@ -9,7 +9,7 @@ import launcher
 
 def test_existing_service_and_unrelated_port_are_distinguished():
     class Handler(BaseHTTPRequestHandler):
-        payload = {'ok': True, 'backend': 'original-musicdl', 'sources': 57}
+        payload = {'ok': True, 'backend': 'melokeep', 'sources': 57}
         def log_message(self, *args):
             pass
         def do_GET(self):
@@ -32,8 +32,8 @@ def test_existing_service_and_unrelated_port_are_distinguished():
 
 def test_duplicate_launch_does_not_spawn_or_import_app(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, 'ROOT', tmp_path)
-    monkeypatch.setenv('MUSICDL_PORT', '8765')
-    monkeypatch.setenv('MUSICDL_NO_BROWSER', '1')
+    monkeypatch.setenv('MELOKEEP_PORT', '8765')
+    monkeypatch.setenv('MELOKEEP_NO_BROWSER', '1')
     with patch.object(launcher, 'service_status', return_value=('running', 'http://127.0.0.1:8765')):
         with patch.object(launcher.subprocess, 'Popen') as spawn:
             assert launcher.main() == 0

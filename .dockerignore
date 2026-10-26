@@ -6,7 +6,7 @@ output/
 target/
 frontend/node_modules/
 frontend/dist/
-musicdl_outputs/
+melokeep_outputs/
 music/
 data/
 config.json

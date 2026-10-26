@@ -31,8 +31,8 @@ def test_shared_search_survives_one_subscriber_cancelling_and_caches_by_config()
         await runtime.run({'cookie': 'changed'}, 'QQ', 'hello')
         await runtime.run({}, 'QQ', 'hello', refresh=True)
         assert len(calls) == 3
-        await runtime.run({'_musicdl_refresh': True}, 'QQ', 'hello', refresh=True)
-        await runtime.run({'_musicdl_refresh': False}, 'QQ', 'hello')
+        await runtime.run({'_melokeep_refresh': True}, 'QQ', 'hello', refresh=True)
+        await runtime.run({'_melokeep_refresh': False}, 'QQ', 'hello')
         assert len(calls) == 4
         await runtime.close()
     asyncio.run(check())

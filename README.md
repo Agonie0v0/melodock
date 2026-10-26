@@ -54,7 +54,7 @@ Navidrome 歌曲支持列表和卡片视图：
 
 ### 搜索、试听与下载
 
-- 使用上游 [CharlesPikachu/musicdl](https://github.com/CharlesPikachu/musicdl) 引擎搜索和解析音乐，可选择音源，配置 Cookie、代理和请求参数。
+- 使用多音源搜索引擎搜索和解析音乐，可选择音源，配置 Cookie、代理和请求参数。
 - 增量显示搜索结果，支持音源筛选、无损 / 普通音质 / MP3 / 音质未知筛选，以及大小、品质、时长、曲名等排序。
 - 搜索默认解析可用的格式和文件大小；也可开启“按需解析”，先展示候选，播放或下载时再获取版本信息。
 - 在线播放、进度拖动、音量和静音、随机和循环播放、待播列表、歌词跟随。LRC 歌词可点击跳转，并可调整显示大小。
@@ -284,15 +284,6 @@ Telegram [官方文档](https://core.telegram.org/bots/api#using-a-local-bot-api
 
 更多配置见 [.env.example](.env.example) 和[配置文档](docs/configuration.md)。容器内的 `127.0.0.1` 指向容器自身，访问宿主机代理时使用宿主机地址。
 
-### 从旧版本升级
-
-项目现名 **MeloKeep**，仓库为 [Agonie0v0/melokeep](https://github.com/Agonie0v0/melokeep)，曾用名为 musicdl、MeloDock。
-
-- 新部署使用 `MELOKEEP_*` 和 `melokeep.db`；已有 `MELODOCK_*`、`MUSICDL_*` 继续兼容。同一配置优先级为 `MELOKEEP_*` > `MELODOCK_*` > `MUSICDL_*`。
-- 继续读取已有 `melodock.db` 或 `musicdl.db`，浏览器偏好自动迁移。保留原音乐目录、数据目录和处理备份。
-- 旧镜像 `ghcr.io/agonie0v0/melodock`、`ghcr.io/agonie0v0/musicdl` 继续发布兼容标签；换用新地址时只修改 `image`，保留现有服务名和挂载路径。
-- 飞书、钉钉配置关键词校验时，将允许关键词更新为 `MeloKeep`。
-
 ## 本机运行与开发
 
 源码运行需要 Python 3.11+、Node.js 24+。FFmpeg 用于音频检查、转码和 CUE 分轨，fpcalc 用于 AcoustID 指纹；Docker 镜像已内置这些工具。
@@ -324,12 +315,13 @@ python -m pip install -r requirements.txt pytest httpx imageio-ffmpeg
 npm run format:check --prefix frontend
 npm test --prefix frontend
 npm run build --prefix frontend
-python -m pytest tests legacy/tests -q
+python -m pytest tests -q
+python -m pytest legacy/tests -q
 ```
 
 浏览器检查：在 `frontend` 目录执行 `npx playwright install chromium`，再执行 `npm run test:browser`。Windows 可用 `MELOKEEP_BROWSER_EXECUTABLE` 指定已安装的 Chrome / Edge。
 
-后端使用 Python / FastAPI，前端使用 React / TypeScript / Vite，搜索解析由 musicdl 引擎执行。以单个服务实例运行，避免重复消费机器人消息与下载任务。
+后端使用 Python / FastAPI，前端使用 React / TypeScript / Vite，搜索解析由独立音源引擎执行。以单个服务实例运行，避免重复消费机器人消息与下载任务。
 
 ## 常见问题
 
@@ -365,4 +357,4 @@ Navidrome 需能访问同一份音乐并完成扫描。检查目录挂载、扫�
 
 刮削整理功能参考 Music Tag Web V2 的使用需求，不依赖其容器或商业插件服务；功能范围与差异以项目文档为准。
 
-搜索与下载基于 [CharlesPikachu/musicdl](https://github.com/CharlesPikachu/musicdl)，保留其 **PolyForm Noncommercial 1.0.0** 许可。上游包名、版权和许可不因项目更名而改变；本仓库未重新指定统一许可证，详见 [NOTICE.md](NOTICE.md)、[LICENSE-musicdl-reference](LICENSE-musicdl-reference) 和 [LICENSE-musicsquare](LICENSE-musicsquare)。
+本项目使用的第三方组件及其版权、许可声明见 [NOTICE.md](NOTICE.md)。搜索下载引擎采用 **PolyForm Noncommercial 1.0.0** 许可；本仓库未重新指定统一许可证。

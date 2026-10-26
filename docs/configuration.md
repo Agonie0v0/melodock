@@ -2,7 +2,7 @@
 
 [返回 README](../README.md)
 
-MeloKeep 的新配置统一使用 `MELOKEEP_*`；旧 `MELODOCK_*`、`MUSICDL_*` 仍可直接使用，同时存在时优先级为 `MELOKEEP_*` > `MELODOCK_*` > `MUSICDL_*`。新部署创建 `melokeep.db`，已有 `melodock.db` 或 `musicdl.db` 会继续使用；请保留原数据与音乐挂载。浏览器保存的主题、导航顺序、搜索历史与音乐库显示偏好会自动迁移到新名称，并以新名称下已保存的偏好优先。
+MeloKeep 统一使用 `MELOKEEP_*` 环境变量、`melokeep.db` 数据库和 `.melokeep-history` 操作备份目录。部署时保留音乐与数据挂载；首次启动自动完成必要的数据迁移，完成后仅使用当前名称。浏览器偏好也会一次性转存，后续只保存当前名称下的设置。
 
 下载后自动刮削、整理、已有曲库批处理及 Navidrome 连接，见 [音乐库使用说明](music-library.md)。
 

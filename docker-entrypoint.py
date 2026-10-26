@@ -4,7 +4,7 @@ from pathlib import Path
 import stat
 import sys
 import tempfile
-from runtime_config import apply_environment_aliases
+from runtime_config import initialize_environment
 
 
 def runtime_ids():
@@ -43,9 +43,9 @@ def check_writable(directory):
 
 
 def main():
-    apply_environment_aliases()
-    data = Path(os.environ.get('MUSICDL_DATA_DIR', '/data'))
-    music = Path(os.environ.get('MUSICDL_FILE_ROOT') or os.environ.get('MUSICDL_DOWNLOAD_DIR', '/music'))
+    initialize_environment(Path(__file__).resolve().parent)
+    data = Path(os.environ.get('MELOKEEP_DATA_DIR', '/data'))
+    music = Path(os.environ.get('MELOKEEP_FILE_ROOT') or os.environ.get('MELOKEEP_DOWNLOAD_DIR', '/music'))
     if os.environ.get('HOME') == '/data/home':
         os.environ['HOME'] = str(data / 'home')
     private = data / 'engine'

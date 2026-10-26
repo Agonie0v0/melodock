@@ -15,10 +15,10 @@ import pytest
 from concurrent.futures import Future
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-_root = Path(tempfile.mkdtemp(prefix='musicdl-compat-test-'))
-os.environ.update(MUSICDL_SEARCH_WORKERS='6', MUSICDL_SEARCH_WORKER_IDLE='0', MUSICDL_SEARCH_CACHE_TTL='0', MUSICDL_USER='', MUSICDL_PASS='', MUSICDL_COOKIE_SECURE='0',
-                  MUSICDL_CONFIG=str(_root / 'config.json'), MUSICDL_DATA_DIR=str(_root / 'data'),
-                  MUSICDL_FILE_ROOT=str(_root / 'music'), MUSICDL_BIND='127.0.0.1')
+_root = Path(tempfile.mkdtemp(prefix='melokeep-compat-test-'))
+os.environ.update(MELOKEEP_SEARCH_WORKERS='6', MELOKEEP_SEARCH_WORKER_IDLE='0', MELOKEEP_SEARCH_CACHE_TTL='0', MELOKEEP_USER='', MELOKEEP_PASS='', MELOKEEP_COOKIE_SECURE='0',
+                  MELOKEEP_CONFIG=str(_root / 'config.json'), MELOKEEP_DATA_DIR=str(_root / 'data'),
+                  MELOKEEP_FILE_ROOT=str(_root / 'music'), MELOKEEP_BIND='127.0.0.1')
 
 from fastapi.testclient import TestClient
 from musicdl.modules import SongInfo
@@ -54,16 +54,16 @@ def test_candidates_skip_audio_requests_and_resolve_with_native_policy(monkeypat
     monkeypatch.setattr(engine_worker, 'client_for', lambda *args: SimpleNamespace(
         music_clients={source: provider}, clients_threadings={source: 1},
         requests_overrides={source: {'timeout': 7}}, search_rules={source: {}}))
-    candidates = engine_worker.search({'_musicdl_candidates': True}, source, '候选测试', str(tmp_path / 'partial'))
+    candidates = engine_worker.search({'_melokeep_candidates': True}, source, '候选测试', str(tmp_path / 'partial'))
     assert len(candidates) == 1, '\n'.join(e['message'] for e in list(app.original.LOGS)[-8:])
     candidate = candidates[0]
     assert candidate.song_name == '候选测试' and candidate.duration_s == 200
-    assert candidate.raw_data['_musicdl_candidate'] and not candidate.with_valid_download_url
+    assert candidate.raw_data['_melokeep_candidate'] and not candidate.with_valid_download_url
     assert not provider._parsewiththirdpartapis.called and not provider._parsewithofficialapiv1.called
     song = quality_song('flac', 26012257, source)
     provider._parsewiththirdpartapis = Mock(return_value=song)
     provider._parsewithofficialapiv1 = Mock(return_value=song)
-    resolved = engine_worker.search({'_musicdl_resolve': row}, source, 'native-id')
+    resolved = engine_worker.search({'_melokeep_resolve': row}, source, 'native-id')
     assert resolved == [song]
     assert provider.post.call_count == 1  # Resolve never searches the platform again.
     assert provider._parsewiththirdpartapis.call_args.kwargs['search_result'] == row
@@ -93,13 +93,13 @@ def test_candidate_playback_and_lyrics_share_resolution_and_keep_id(monkeypatch)
     song = fixture_song()
     song.source, song.identifier = 'QQMusicClient', 'on-demand-fixture'
     song.download_url, song.downloaded_contents = None, None
-    song.raw_data = {'_musicdl_candidate': True, 'search': {'mid': 'on-demand-fixture'}}
+    song.raw_data = {'_melokeep_candidate': True, 'search': {'mid': 'on-demand-fixture'}}
     candidate = app.app.state.engine_test['remember'](song)
     assert candidate['qualities'] == [] and candidate['playback']['state'] == 'pending'
     coordinator = app.app.state.engine_test['coordinator']
     calls = []
     async def resolve(cfg, source, keyword, publish):
-        calls.append(cfg['_musicdl_resolve'])
+        calls.append(cfg['_melokeep_resolve'])
         await asyncio.sleep(.05)
         final = quality_song('flac', 26012257, source)
         final.lyric = 'resolved lyrics'
@@ -117,7 +117,7 @@ def test_candidate_playback_and_lyrics_share_resolution_and_keep_id(monkeypatch)
         assert app.app.state.engine_test['remember'](song)['qualities'][0]['lossless']
         # An explicit refresh invalidates the old resolution, while its final
         # duplicate cannot overwrite a newly resolved song.
-        song.raw_data.update(_musicdl_refresh=True, _musicdl_started=time.time())
+        song.raw_data.update(_melokeep_refresh=True, _melokeep_started=time.time())
         refreshed = app.app.state.engine_test['remember'](song)
         assert refreshed['playback']['state'] == 'pending'
         await endpoint('/api/tracks/{sid}/playback', 'POST')(candidate['id'])
@@ -371,7 +371,7 @@ def test_local_song_library_plays_and_edits_real_audio_tags():
     assert native.tags['TXXX:keep'].text == ['unchanged'] and native.tags.getall('APIC')[0].data == b'png-fixture'
     with wave.open(str(audio), 'rb') as reader:
         assert reader.readframes(8000) == b'\0\0' * 8000
-    assert not list(folder.glob('.musicdl-tags-*'))
+    assert not list(folder.glob('.melokeep-tags-*'))
     client.delete('/api/files', params={'path': file['path']}, headers=HEADERS)
     assert not any(t['id'] == track['id'] for t in client.get('/api/playlist').json())
     assert not any(t['id'] == track['id'] for t in client.get('/api/favorites').json())
@@ -420,7 +420,7 @@ def test_tag_edit_failure_keeps_file_and_checks_library_boundary():
     result = client.patch('/api/files/tags', params={'path': token}, headers=HEADERS, json=tags)
     assert result.status_code == 400
     assert target.read_bytes() == b'not-audio'
-    assert not list(target.parent.glob('.musicdl-tags-*'))
+    assert not list(target.parent.glob('.melokeep-tags-*'))
     outside = json.dumps([str(app.original.FILE_ROOT), '../outside.wav'])
     assert client.patch('/api/files/tags', params={'path': outside}, headers=HEADERS, json=tags).status_code == 403
     assert client.get('/api/files/audio', params={'path': outside}).status_code == 403
@@ -794,19 +794,19 @@ def endpoint(path, method):
 def test_search_displays_resolved_metadata_unless_lazy_is_enabled(monkeypatch, lazy, saved):
     from types import SimpleNamespace
     if lazy is None:
-        monkeypatch.delenv('MUSICDL_LAZY_SEARCH', raising=False)
+        monkeypatch.delenv('MELOKEEP_LAZY_SEARCH', raising=False)
     else:
-        monkeypatch.setenv('MUSICDL_LAZY_SEARCH', lazy)
+        monkeypatch.setenv('MELOKEEP_LAZY_SEARCH', lazy)
     monkeypatch.setitem(app.original.manager.config, 'lazy_search', saved)
     enabled = saved if saved is not None else lazy == '1'
     assert endpoint('/api/engine/config', 'GET')()['lazy_search'] is enabled
 
     async def search(cfg, source, keyword, publish, refresh):
-        assert cfg['_musicdl_candidates'] is enabled
+        assert cfg['_melokeep_candidates'] is enabled
         song = fixture_song()
         song.source = source
-        if cfg['_musicdl_candidates']:
-            song.raw_data['_musicdl_candidate'] = True
+        if cfg['_melokeep_candidates']:
+            song.raw_data['_melokeep_candidate'] = True
         return [song]
 
     monkeypatch.setattr(app.app.state.engine_test['coordinator'], 'run', search)

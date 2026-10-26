@@ -218,7 +218,7 @@ class MetadataScraper:
 
     def search_fingerprint(self, reference):
         from audio_tools import fingerprint
-        key = self.credentials().get('acoustid_key') or os.getenv('MUSICDL_ACOUSTID_KEY')
+        key = self.credentials().get('acoustid_key') or os.getenv('MELOKEEP_ACOUSTID_KEY')
         if not key:
             raise ValueError('请先配置 AcoustID 应用 Key')
         if not reference.get('_path'):
@@ -309,7 +309,7 @@ class MetadataScraper:
         cfg['request_timeout'] = min(int(cfg.get('request_timeout') or 10), 12)
         cfg.setdefault('global_client_cfg', {})['search_size_per_source'] = 8
         cfg['global_client_cfg']['search_size_per_page'] = 10
-        cfg['_musicdl_candidates'] = True
+        cfg['_melokeep_candidates'] = True
         client = engine_worker.client_for(cfg, SOURCES[source])
         return cfg, client.music_clients[SOURCES[source]], client.requests_overrides[SOURCES[source]]
 

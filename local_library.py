@@ -138,7 +138,7 @@ def update_metadata(path, title, artist, album):
 def write_metadata(path, changes, *, lyrics=None, cover=None, clear_all=False):
     # Save to a sibling copy and replace only after tag writing succeeds, so a
     # failed edit leaves the original audio and its other tags intact.
-    fd, filename = tempfile.mkstemp(prefix='.musicdl-tags-', suffix=path.suffix, dir=path.parent)
+    fd, filename = tempfile.mkstemp(prefix='.melokeep-tags-', suffix=path.suffix, dir=path.parent)
     os.close(fd)
     temporary = Path(filename)
     try:

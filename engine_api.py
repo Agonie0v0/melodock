@@ -28,7 +28,7 @@ from fastapi.exception_handlers import http_exception_handler
 from pydantic import BaseModel, Field
 import engine_worker
 import local_library
-from runtime_config import database_path
+from runtime_config import database_path, migrate_library_state
 from library_pipeline import LibraryPipeline, ProcessBody
 from metadata_scraper import from_song as song_metadata
 from search_runtime import SearchWorkers, SearchCoordinator, deliver, terminate
@@ -120,7 +120,7 @@ class FileTagsBody(BaseModel):
 
 
 def install(old, root):
-    data = Path(os.environ.get('MUSICDL_DATA_DIR', root / 'data')).resolve()
+    data = Path(os.environ.get('MELOKEEP_DATA_DIR', root / 'data')).resolve()
     data.mkdir(parents=True, exist_ok=True)
     private = data / 'engine'
     private.mkdir(exist_ok=True)
@@ -134,6 +134,7 @@ def install(old, root):
     db.execute('PRAGMA journal_mode=WAL')
     db.execute('CREATE TABLE IF NOT EXISTS records(kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,updated INTEGER NOT NULL DEFAULT (unixepoch()),PRIMARY KEY(kind,id))')
     db.commit()
+    migrate_library_state(db, old.FILE_ROOT, root, private)
 
     def get(kind, key, default=None):
         with db_lock:
@@ -191,18 +192,18 @@ def install(old, root):
         return {'sources': [source_id(s) for s in cfg['music_sources'] if s in registered],
                 'available_sources': [{**source, 'proxy_recommended': source['engine_name'] in PROXY_RECOMMENDED,
                                        'init_error': old.manager.source_errors.get(source['engine_name'])} for source in catalog],
-                'engine': f'musicdl {old.MUSICDL_VERSION}',
+                'engine': f'MeloKeep engine {old.ENGINE_VERSION}',
                 'results_per_source': cfg['global_client_cfg'].get('search_size_per_source', 5),
                 'search_timeout_seconds': cfg.get('request_timeout', 30),
                 'playback_timeout_seconds': cfg.get('request_timeout', 30),
-                'download_concurrency': int(os.environ.get('MUSICDL_MAX_DOWNLOAD_TASKS', '2')),
+                'download_concurrency': int(os.environ.get('MELOKEEP_MAX_DOWNLOAD_TASKS', '2')),
                 'download_layout': cfg.get('download_layout', 'source'),
                 'lyrics_mode': cfg.get('lyrics_mode', 'both'), 'embed_metadata': True,
                 'source_settings': settings}
 
     def track(song, sid=None):
         supplied_id = sid is not None
-        candidate = bool(song.raw_data.get('_musicdl_candidate'))
+        candidate = bool(song.raw_data.get('_melokeep_candidate'))
         ext = str(song.ext or '').lower().lstrip('.')
         bitrate = int(song.bitrate or 0) or None
         if bitrate and bitrate > 10000:
@@ -211,7 +212,7 @@ def install(old, root):
         quality = f'engine:{ext or "original"}:{bitrate or 0}'
         sid = sid or hashlib.sha256(f'{song.source}|{song.root_source}|{song.identifier}|{song.song_name}|{song.singers}|{quality}|{song.file_size_bytes}'.encode()).hexdigest()[:24]
         if candidate and not supplied_id:
-            sid = hashlib.sha256(f'{song.source}|{song.identifier}|{song.raw_data.get("_musicdl_config", "")}|candidate'.encode()).hexdigest()[:24]
+            sid = hashlib.sha256(f'{song.source}|{song.identifier}|{song.raw_data.get("_melokeep_config", "")}|candidate'.encode()).hexdigest()[:24]
         playable = old.songplayable(song)
         label = (ext.upper() + (' 无损' if lossless else f' {bitrate} kbps' if bitrate else '')) if ext else '原音源提供的版本'
         return {'id': sid, 'source': source_id(str(song.source)), 'source_id': str(song.identifier or sid),
@@ -230,7 +231,7 @@ def install(old, root):
     remember_lock = threading.RLock()
     song_sizes = OrderedDict()
     song_bytes = 0
-    song_budget = max(1, int(os.environ.get('MUSICDL_SONG_CACHE_MB', '32'))) * 1024 * 1024
+    song_budget = max(1, int(os.environ.get('MELOKEEP_SONG_CACHE_MB', '32'))) * 1024 * 1024
 
     def remember(song, sid=None):
         nonlocal song_bytes
@@ -242,17 +243,17 @@ def install(old, root):
         serialized = pickle.dumps(song, protocol=pickle.HIGHEST_PROTOCOL)
         fingerprint = hashlib.sha256(serialized).digest()
         with remember_lock:
-            if song.raw_data.get('_musicdl_candidate'):
+            if song.raw_data.get('_melokeep_candidate'):
                 stored = get('track', sid)
                 if (stored and stored.get('resolved_until', 0) > time.time() and path.exists()
-                        and (not song.raw_data.get('_musicdl_refresh')
-                             or stored.get('resolved_at', 0) >= song.raw_data.get('_musicdl_started', float('inf')))):
+                        and (not song.raw_data.get('_melokeep_refresh')
+                             or stored.get('resolved_at', 0) >= song.raw_data.get('_melokeep_started', float('inf')))):
                     return stored['track']
             if saved_songs.get(sid) != fingerprint or not path.exists():
                 temp = path.with_suffix(f'.{uuid.uuid4().hex}.tmp')
                 temp.write_bytes(serialized)
                 os.replace(temp, path)
-                resolved_at = time.time() if not song.raw_data.get('_musicdl_candidate') else 0
+                resolved_at = time.time() if not song.raw_data.get('_melokeep_candidate') else 0
                 put('track', sid, {'track': value, 'resolved_at': resolved_at,
                                    'resolved_until': resolved_at + 60 if resolved_at else 0})
                 saved_songs[sid] = fingerprint
@@ -349,12 +350,12 @@ def install(old, root):
                     f'播放位置={body.position:.2f}s\n浏览器：{body.browser}', category='playback', task_id=body.track_id)
         return {'recorded': True}
     search_pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn'), max_tasks_per_child=8)
-    download_pool = ThreadPoolExecutor(max_workers=max(1, min(4, int(os.environ.get('MUSICDL_MAX_DOWNLOAD_TASKS', '2')))))
+    download_pool = ThreadPoolExecutor(max_workers=max(1, min(4, int(os.environ.get('MELOKEEP_MAX_DOWNLOAD_TASKS', '2')))))
     searches = OrderedDict()
-    search_slots = asyncio.Semaphore(max(1, min(6, int(os.environ.get('MUSICDL_SEARCH_WORKERS', '4')))))
-    workers = SearchWorkers(root, idle_seconds=max(0, int(os.environ.get('MUSICDL_SEARCH_WORKER_IDLE', '20'))))
-    search_budget = max(1, int(os.environ.get('MUSICDL_SEARCH_BUDGET', '120')))
-    queue_budget = max(1, int(os.environ.get('MUSICDL_SEARCH_QUEUE_TIMEOUT', '30')))
+    search_slots = asyncio.Semaphore(max(1, min(6, int(os.environ.get('MELOKEEP_SEARCH_WORKERS', '4')))))
+    workers = SearchWorkers(root, idle_seconds=max(0, int(os.environ.get('MELOKEEP_SEARCH_WORKER_IDLE', '20'))))
+    search_budget = max(1, int(os.environ.get('MELOKEEP_SEARCH_BUDGET', '120')))
+    queue_budget = max(1, int(os.environ.get('MELOKEEP_SEARCH_QUEUE_TIMEOUT', '30')))
     runners, runner_lock = {}, threading.RLock()
 
     def read_worker_logs(path, cursor=0):
@@ -395,7 +396,7 @@ def install(old, root):
 
     @router.get('/api/health')
     def health():
-        return {'ok': True, 'backend': 'original-musicdl', 'version': old.MUSICDL_VERSION, 'sources': len(registered)}
+        return {'ok': True, 'backend': 'melokeep', 'version': old.ENGINE_VERSION, 'sources': len(registered)}
 
     @router.get('/api/auth/status')
     def auth_status(request: Request):
@@ -409,7 +410,7 @@ def install(old, root):
     def read_engine_config():
         cfg = copy.deepcopy(old.manager.config)
         if cfg.get('lazy_search') is None:
-            cfg['lazy_search'] = os.environ.get('MUSICDL_LAZY_SEARCH', '0') == '1'
+            cfg['lazy_search'] = os.environ.get('MELOKEEP_LAZY_SEARCH', '0') == '1'
         return cfg
 
     @router.put('/api/engine/config')
@@ -537,7 +538,7 @@ def install(old, root):
                 await cleanup_task
                 raise
 
-    coordinator = SearchCoordinator(source_results, ttl=max(0, int(os.environ.get('MUSICDL_SEARCH_CACHE_TTL', '30'))))
+    coordinator = SearchCoordinator(source_results, ttl=max(0, int(os.environ.get('MELOKEEP_SEARCH_CACHE_TTL', '30'))))
 
     async def run_search(job, cfg, sources, keyword, refresh=False):
         async def run_source(name):
@@ -577,8 +578,8 @@ def install(old, root):
     async def search_start(body: SearchBody):
         keyword = body.keyword.strip()
         cfg = read_engine_config()
-        cfg['_musicdl_candidates'] = cfg['lazy_search']
-        cfg['_musicdl_refresh'] = body.refresh
+        cfg['_melokeep_candidates'] = cfg['lazy_search']
+        cfg['_melokeep_refresh'] = body.refresh
         sources = [source_class(s) for s in (body.sources or config()['sources'])]
         if not keyword or not sources or any(s not in cfg['music_sources'] or s not in registered for s in sources):
             raise HTTPException(400, '关键词或启用音源无效')
@@ -650,14 +651,14 @@ def install(old, root):
 
     async def resolved_track(sid):
         song = await asyncio.to_thread(song_for, sid)
-        if song.raw_data.get('_musicdl_candidate'):
+        if song.raw_data.get('_melokeep_candidate'):
             cfg = copy.deepcopy(old.manager.config)
             if song.source not in cfg['music_sources']:
                 raise HTTPException(409, '该音源已停用，请重新搜索')
-            cfg['_musicdl_resolve'] = song.raw_data['search']
+            cfg['_melokeep_resolve'] = song.raw_data['search']
             try:
                 songs = await coordinator.run(cfg, song.source, str(song.identifier),
-                                              refresh=bool(song.raw_data.get('_musicdl_refresh')))
+                                              refresh=bool(song.raw_data.get('_melokeep_refresh')))
             except TimeoutError:
                 raise HTTPException(504, '排队或音频解析超时，请稍后重试或更换音源') from None
             except RuntimeError:
