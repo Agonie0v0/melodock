@@ -18,7 +18,7 @@ export function trackSize(track: Track): number | null {
 }
 
 function qualityScore(track: Track): number | null {
-  const known = track.qualities.filter(
+  const known = trackQualities(track).filter(
     (q) => q.codec || q.lossless || q.bitrate,
   );
   if (!known.length) return null;
@@ -29,6 +29,34 @@ function qualityScore(track: Track): number | null {
         : q.bitrate || (q.codec ? 0 : -1),
     ),
   );
+}
+
+function trackQualities(track: Track) {
+  // Library streams are original files; search previews may be transcoded.
+  if (track.source !== "navidrome" && track.source !== "local")
+    return track.qualities;
+  const codec = track.playback.codec?.trim().toLowerCase();
+  if (!codec) return [];
+  return [
+    {
+      codec,
+      bitrate: track.playback.bitrate,
+      lossless: [
+        "flac",
+        "alac",
+        "ape",
+        "wav",
+        "aiff",
+        "aif",
+        "wv",
+        "tta",
+        "tak",
+        "pcm",
+        "dsf",
+        "dff",
+      ].includes(codec),
+    },
+  ];
 }
 
 function numeric(a: number | null, b: number | null, descending: boolean) {
@@ -46,19 +74,21 @@ export function selectResults(
   sort: string,
 ): Track[] {
   return tracks
-    .filter(
-      (track) =>
+    .filter((track) => {
+      const qualities = trackQualities(track);
+      return (
         (source === "all" || track.source === source) &&
         (!readyOnly || track.playback.state === "ready") &&
-        (quality !== "lossless" || track.qualities.some((q) => q.lossless)) &&
+        (quality !== "lossless" || qualities.some((q) => q.lossless)) &&
         (quality !== "lossy" ||
-          track.qualities.some((q) => !q.lossless && !!q.codec)) &&
+          qualities.some((q) => !q.lossless && !!q.codec)) &&
         (quality !== "mp3" ||
-          track.qualities.some((q) => q.codec.toLowerCase() === "mp3")) &&
+          qualities.some((q) => q.codec.toLowerCase() === "mp3")) &&
         (quality !== "unknown" ||
-          !track.qualities.length ||
-          track.qualities.every((q) => !q.codec)),
-    )
+          !qualities.length ||
+          qualities.every((q) => !q.codec))
+      );
+    })
     .sort((a, b) => {
       if (sort === "name") return a.title.localeCompare(b.title, "zh");
       if (sort === "artist") return a.artist.localeCompare(b.artist, "zh");

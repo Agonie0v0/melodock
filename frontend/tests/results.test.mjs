@@ -59,3 +59,68 @@ test("size and quality sort in both directions, unknowns last", () => {
     ["mp3-128", "unknown", "flac", "mp3-320"],
   );
 });
+
+test("library formats drive quality filters and sorting without download versions", () => {
+  const library = (id, codec, bitrate = null, source = "navidrome") => ({
+    ...make(id, "", false, null, null),
+    source,
+    playback: { state: "ready", codec, bitrate },
+  });
+  const songs = [
+    library("mp3", " MP3 ", 320),
+    library("unknown", null, 1000),
+    library("flac", "FLAC", 800),
+    library("aac", "aac", 256),
+    library("local-alac", "alac", null, "local"),
+    library("missing-format", "  "),
+  ];
+  const selected = (quality, sort = "relevance") =>
+    selectResults(songs, "all", quality, false, sort).map((t) => t.id);
+  assert.deepEqual(selected("lossless"), ["flac", "local-alac"]);
+  assert.deepEqual(selected("mp3"), ["mp3"]);
+  assert.deepEqual(selected("lossy"), ["mp3", "aac"]);
+  assert.deepEqual(selected("unknown"), ["unknown", "missing-format"]);
+  assert.deepEqual(selected("all", "quality-desc"), [
+    "flac",
+    "local-alac",
+    "mp3",
+    "aac",
+    "unknown",
+    "missing-format",
+  ]);
+  assert.deepEqual(selected("all", "quality-asc"), [
+    "aac",
+    "mp3",
+    "local-alac",
+    "flac",
+    "unknown",
+    "missing-format",
+  ]);
+  assert.deepEqual(
+    selectResults(songs, "navidrome", "lossless", true, "relevance").map(
+      (t) => t.id,
+    ),
+    ["flac"],
+  );
+  assert.ok(songs.every((t) => t.qualities.length === 0));
+});
+
+test("search preview codecs do not establish download quality", () => {
+  const candidate = {
+    ...make("candidate", "", false, null, null),
+    playback: {
+      state: "ready",
+      codec: "mp3",
+      bitrate: 128,
+      preview_only: true,
+    },
+  };
+  assert.deepEqual(
+    selectResults([candidate], "all", "mp3", false, "relevance"),
+    [],
+  );
+  assert.deepEqual(
+    selectResults([candidate], "all", "unknown", false, "relevance"),
+    [candidate],
+  );
+});

@@ -2719,6 +2719,31 @@ tr.current {
   border-radius: 999px;
   background: var(--subtle);
 }
+.bot-settings .channel-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--muted) 90%, var(--ink));
+}
+.channel-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+.bot-settings .channel-status[data-enabled="true"] {
+  color: oklch(45% 0.1 165);
+  background: var(--emerald-bg);
+}
+:root[data-theme="dark"] .channel-status[data-enabled="true"] {
+  color: var(--emerald);
+}
 .settings-section > p {
   margin: 14px 0;
   max-width: 90ch;

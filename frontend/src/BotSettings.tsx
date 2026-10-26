@@ -255,7 +255,9 @@ export function BotSettings() {
       <section className="settings-section settings-behavior">
         <h2>
           Telegram 机器人{" "}
-          <small>运行状态：{config.status.tg ? "已启用" : "未启用"}</small>
+          <small className="channel-status" data-enabled={config.status.tg}>
+            运行状态：{config.status.tg ? "已启用" : "未启用"}
+          </small>
         </h2>
         <label className="ready-filter">
           <input
@@ -360,7 +362,9 @@ export function BotSettings() {
       <section className="settings-section settings-sources">
         <h2>
           企业微信自建应用{" "}
-          <small>运行状态：{config.status.wecom ? "已启用" : "未启用"}</small>
+          <small className="channel-status" data-enabled={config.status.wecom}>
+            运行状态：{config.status.wecom ? "已启用" : "未启用"}
+          </small>
         </h2>
         <label className="ready-filter">
           <input

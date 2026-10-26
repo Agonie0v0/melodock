@@ -328,6 +328,7 @@ try {
     cover: `${base}/test-cover.svg`,
     playback: { ...localTrack.playback, url: "/api/navidrome/stream/s" },
   };
+  let remotePlaylistTracks = [remoteTrack];
   let remoteLyrics =
     "[00:00.000]音乐库歌词第一句\n[00:02.250]音乐库歌词第二句\n[00:05.001]音乐库歌词第三句";
   const remoteAlbum = {
@@ -371,7 +372,7 @@ try {
               read_only: true,
               source_url: "",
               created_at: 1792700000,
-              track_count: 1,
+              track_count: remotePlaylistTracks.length,
               issue_count: 0,
               cover: remoteTrack.cover,
               detail: "自动同步",
@@ -387,7 +388,7 @@ try {
         read_only: true,
         source_url: "",
         created_at: 1792700000,
-        tracks: [remoteTrack],
+        tracks: remotePlaylistTracks,
         issues: [],
         detail: "自动同步",
         task_id: "",
@@ -2377,6 +2378,52 @@ try {
   }
   await page.setViewportSize({ width: 1920, height: 1080 });
 
+  remotePlaylistTracks = ["mp3", "", "flac", "aac"].map((codec) => ({
+    ...remoteTrack,
+    id: `navidrome-quality-${codec || "unknown"}`,
+    title: `筛选测试 ${codec || "unknown"}`,
+    playback: {
+      ...remoteTrack.playback,
+      codec,
+      bitrate: codec === "flac" ? 900 : codec === "mp3" ? 320 : 128,
+    },
+  }));
+  await page.getByRole("button", { name: "同步歌单", exact: true }).click();
+  await expect(page.locator(".track-table tbody tr")).toHaveCount(4);
+  const qualityFilters = page.getByRole("group", {
+    name: "音质筛选",
+    exact: true,
+  });
+  for (const [label, formats] of [
+    ["仅无损", ["flac"]],
+    ["MP3", ["mp3"]],
+    ["普通音质", ["mp3", "aac"]],
+    ["音质未知", ["unknown"]],
+  ]) {
+    await qualityFilters
+      .getByRole("button", { name: label, exact: true })
+      .click();
+    await expect(page.locator(".track-table tbody tr .song-name")).toHaveText(
+      formats.map((codec) => `筛选测试 ${codec}`),
+    );
+  }
+  await qualityFilters
+    .getByRole("button", { name: "全部", exact: true })
+    .click();
+  await page.getByLabel("结果排序").selectOption("quality-desc");
+  await expect(page.locator(".track-table tbody tr .song-name")).toHaveText([
+    "筛选测试 flac",
+    "筛选测试 mp3",
+    "筛选测试 aac",
+    "筛选测试 unknown",
+  ]);
+  await page.getByLabel("结果排序").selectOption("relevance");
+  remotePlaylistTracks = [remoteTrack];
+  await page.getByRole("button", { name: "同步歌单", exact: true }).click();
+  await expect(page.locator(".track-table tbody tr .song-name")).toHaveText([
+    remoteTrack.title,
+  ]);
+
   await expect(
     page.getByRole("button", { name: "删除歌单", exact: true }),
   ).toHaveCount(0);
@@ -2401,6 +2448,12 @@ try {
   await page.getByRole("button", { name: "同步歌单", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await openSettings("通知与机器人");
+  await expect(
+    page.locator('.channel-status[data-enabled="false"]'),
+  ).toHaveCount(2);
+  await page.locator(".bot-settings .settings-behavior h2").screenshot({
+    path: "../output/test-ui-channel-disabled.png",
+  });
   await expect(
     page.getByRole("button", { name: "测试 Telegram 连接", exact: true }),
   ).toBeEnabled();
@@ -2438,6 +2491,9 @@ try {
     page.getByLabel("企业微信回调地址", { exact: true }),
   ).toHaveValue("http://192.168.1.20:8765/bot/wecom");
   await page.getByLabel("启用 Telegram", { exact: true }).check();
+  await expect(
+    page.locator('.channel-status[data-enabled="false"]'),
+  ).toHaveCount(2);
   await page.getByLabel("Telegram 用户白名单", { exact: true }).fill("123456");
   await page
     .getByLabel("企业微信 CorpID", { exact: true })
@@ -2474,6 +2530,17 @@ try {
   await expect(
     page.getByText("通知渠道已保存并立即生效，无需重启服务", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.locator('.channel-status[data-enabled="true"]'),
+  ).toHaveCount(2);
+  await page.locator(".bot-settings .settings-behavior h2").screenshot({
+    path: "../output/test-ui-channel-enabled.png",
+  });
+  await changeTheme("dark");
+  await page.locator(".bot-settings .settings-behavior h2").screenshot({
+    path: "../output/test-ui-channel-enabled-dark.png",
+  });
+  await changeTheme("light");
   await expect(
     page.getByLabel("Telegram Bot Token", { exact: true }),
   ).toHaveValue("");
