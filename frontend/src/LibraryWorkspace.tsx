@@ -356,7 +356,7 @@ export function LibraryWorkspace({
                 <p className="setting-help">
                   只修改勾选的字段。手动修改后的文字标签会锁定，后续自动刮削会保留。
                   {
-                    " 支持 ${title}、${albumartist}、${counter} 等变量，按每首歌原标签计算。"
+                    " 支持 {title}、{album_artist} 或 ${title}、${albumartist}、${counter} 等变量，按每首歌原标签计算。"
                   }
                 </p>
               </>
@@ -443,7 +443,7 @@ export function LibraryWorkspace({
                 />
                 <small>
                   {
-                    "支持 ${title}、${artist}、${tracknumber}、${counter} 和条件表达式；扩展名自动保留，目录不变。"
+                    "支持 {title}、{artist}、{track_number} 或高级表达式 ${counter.zfill(2)} - ${title}；扩展名自动保留，目录不变。"
                   }
                 </small>
               </label>

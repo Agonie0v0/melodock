@@ -121,6 +121,20 @@ export function LibraryWorkbench({
               <p className="library-path">
                 目标目录：{config.library_dir} / {config.folder_template} /{" "}
                 {config.filename_template}
+                <small className="library-path-preview">
+                  示例：{config.library_dir} /{" "}
+                  {config.folder_template
+                    .replace(/\{album_artist\}|\{artist\}/g, "周杰伦")
+                    .replace(/\{album\}/g, "范特西")
+                    .replace(/\{year\}|\{date\}/g, "2001")}{" "}
+                  /{" "}
+                  {config.filename_template
+                    .replace(/\{track_number\}/g, "01")
+                    .replace(/\{disc_number\}/g, "1")
+                    .replace(/\{artist\}/g, "周杰伦")
+                    .replace(/\{title\}/g, "爱在西元前")}
+                  .flac
+                </small>
               </p>
             )}
           </div>

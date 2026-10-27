@@ -114,6 +114,7 @@ export function App() {
     return () => system.removeEventListener("change", update);
   }, [theme]);
   const [view, setView] = useState<View>("search"),
+    [returnView, setReturnView] = useState<View>("search"),
     [query, setQuery] = useState(""),
     [tracks, setTracks] = useState<Track[]>([]),
     [searching, setSearching] = useState(false),
@@ -125,6 +126,19 @@ export function App() {
     [sort, setSort] = useState("relevance"),
     [selected, setSelected] = useState<Set<string>>(new Set());
   const sources = config?.available_sources || defaultSources;
+  const sourceLabel = (id: string, playlistContext = false) =>
+    id === "navidrome"
+      ? "Navidrome"
+      : id === "custom"
+        ? "自建歌单"
+        : id === "local"
+          ? playlistContext
+            ? "自建歌单"
+            : "本地音乐"
+          : sources.find((s) => s.id === id)?.label || id;
+  useEffect(() => {
+    if (view !== "player") setReturnView(view);
+  }, [view]);
   const [favorites, setFavorites] = useState<Track[]>([]),
     [playlist, setPlaylist] = useState<Track[]>([]),
     [jobs, setJobs] = useState<DownloadJob[]>([]),
@@ -1151,7 +1165,13 @@ export function App() {
             value={sort}
             onChange={(e) => setSort(e.target.value)}
           >
-            <option value="relevance">相关度</option>
+            <option value="relevance">
+              {view === "playlists"
+                ? "歌单曲序"
+                : view === "favorites"
+                  ? "收藏顺序"
+                  : "相关度"}
+            </option>
             <option value="name">曲名</option>
             <option value="artist">歌手</option>
             <option value="source">音源</option>
@@ -1191,9 +1211,9 @@ export function App() {
               <th>收藏</th>
               <th>播放</th>
               <th>下载</th>
-              <th>加入播放列表</th>
+              <th>待播</th>
               {view === "playlists" && !activePlaylist?.read_only && (
-                <th>移出歌单</th>
+                <th>移出</th>
               )}
             </tr>
           </thead>
@@ -1246,8 +1266,7 @@ export function App() {
                   </div>
                 </td>
                 <td className="track-source" data-label="音源">
-                  {sources.find((s) => s.id === track.source)?.label ||
-                    track.source}
+                  {sourceLabel(track.source)}
                 </td>
                 <td className="track-versions" data-label="曲目版本">
                   {track.source === "navidrome" ? (
@@ -1338,11 +1357,11 @@ export function App() {
                   <button
                     className="icon-button"
                     aria-label={`加入播放列表 ${track.title}`}
-                    title="加入播放列表"
+                    title="加入待播"
                     onClick={() => void addToPlaylist([track])}
                   >
                     <Plus />
-                    <span>加入播放列表</span>
+                    <span>加入待播</span>
                   </button>
                 </td>
                 {view === "playlists" && !activePlaylist?.read_only && (
@@ -1376,7 +1395,9 @@ export function App() {
       </section>
       <div className="result-foot">
         <Info />
-        音源标注的音质将在下载前验证
+        {view === "playlists" && activePlaylist?.source === "navidrome"
+          ? "曲库音质由服务器音频文件直接提供"
+          : "音源标注的音质将在下载前验证"}
         <span>
           {view !== "search"
             ? ""
@@ -1395,11 +1416,12 @@ export function App() {
           <button onClick={() => setSelected(new Set())}>取消选择</button>
           <button
             className="secondary"
+            aria-label="加入播放列表"
             disabled={!selection.length}
             onClick={() => void addToPlaylist(selection)}
           >
             <Plus />
-            加入播放列表
+            加入待播
           </button>
           <button
             className="secondary"
@@ -1568,7 +1590,7 @@ export function App() {
           </div>
         </aside>
         <main className="workspace">
-          {view !== "search" && (
+          {view !== "search" && view !== "player" && (
             <header className="top">
               <div>
                 <h1>{collectionView ? views.playlists[0] : views[view][0]}</h1>
@@ -1964,10 +1986,12 @@ export function App() {
               <div className="playback-top">
                 <button
                   className="text-button"
-                  onClick={() => setView("search")}
+                  onClick={() => setView(returnView)}
                 >
                   <ArrowLeft />
-                  返回搜索结果
+                  {returnView === "search"
+                    ? "返回搜索结果"
+                    : `返回${["playlists", "favorites", "import"].includes(returnView) ? views.playlists[0] : views[returnView][0]}`}
                 </button>
                 <span className="badge">{playbackLabel}</span>
               </div>
@@ -1991,9 +2015,7 @@ export function App() {
                       </Button>
                     </div>
                     <div className="album-metadata">
-                      <span>
-                        {sources.find((s) => s.id === current.source)?.label}
-                      </span>
+                      <span>{sourceLabel(current.source)}</span>
                       <span>{current.album}</span>
                       <span>{clock(duration)}</span>
                     </div>
@@ -2066,10 +2088,11 @@ export function App() {
                       </button>
                       <button
                         className="secondary"
+                        aria-label="加入播放列表"
                         onClick={() => void addToPlaylist([current])}
                       >
                         <Plus />
-                        加入播放列表
+                        加入待播
                       </button>
                       <button
                         className="secondary"
@@ -2448,13 +2471,7 @@ export function App() {
                 void refreshPlaylists().catch(fail);
               }}
               current={activePlaylist}
-              sourceName={(id) =>
-                id === "navidrome"
-                  ? "Navidrome"
-                  : id === "custom" || id === "local"
-                    ? "自建歌单"
-                    : sources.find((s) => s.id === id)?.label || id
-              }
+              sourceName={(id) => sourceLabel(id, true)}
               open={(id) => void openPlaylist(id)}
               back={() => {
                 setActivePlaylist(null);
@@ -2638,6 +2655,75 @@ export function App() {
             />
           )}
           {view === "logs" && <RuntimeLogs active={!loginRequired} />}
+          {current &&
+            view !== "search" &&
+            view !== "favorites" &&
+            view !== "player" && (
+              <aside className="global-mini-player" aria-label="全局播放控制">
+                <div className="global-mini-track">
+                  <Cover track={current} />
+                  <div className="global-mini-copy">
+                    <strong>{current.title}</strong>
+                    <span>
+                      {current.artist} · {current.album || "未知专辑"}
+                    </span>
+                  </div>
+                </div>
+                <div className="timeline global-mini-timeline">
+                  <span>{clock(time)}</span>
+                  <input
+                    aria-label="全局播放进度"
+                    type="range"
+                    min="0"
+                    max={duration || 1}
+                    step=".1"
+                    value={Math.min(time, duration || 1)}
+                    style={
+                      {
+                        "--progress": `${duration ? Math.min(100, (time / duration) * 100) : 0}%`,
+                      } as React.CSSProperties
+                    }
+                    onChange={(e) => seek(Number(e.target.value))}
+                  />
+                  <span>{clock(duration)}</span>
+                </div>
+                <div className="global-mini-actions">
+                  <Button label="上一首全局曲目" onClick={() => step(-1)}>
+                    <SkipBack />
+                  </Button>
+                  <button
+                    type="button"
+                    className="pause"
+                    aria-label={playing ? "暂停全局播放" : "继续全局播放"}
+                    disabled={loadingPlay}
+                    onClick={() => void toggle()}
+                  >
+                    {loadingPlay ? (
+                      <span className="loading-dot" />
+                    ) : playing ? (
+                      <Pause />
+                    ) : (
+                      <Play />
+                    )}
+                  </button>
+                  <Button label="下一首全局曲目" onClick={() => step(1)}>
+                    <SkipForward />
+                  </Button>
+                  <Button
+                    label="查看待播列表"
+                    onClick={() => setShowPlaylist(true)}
+                  >
+                    <ListMusic />
+                  </Button>
+                  <Button
+                    label="展开全屏播放器"
+                    onClick={() => setView("player")}
+                  >
+                    <Expand />
+                  </Button>
+                </div>
+              </aside>
+            )}
         </main>
       </div>
       {notice && (
@@ -2664,7 +2750,7 @@ export function App() {
               取消
             </button>
             <button
-              className="primary"
+              className="primary danger"
               disabled={managing}
               onClick={() => void confirmation.run()}
             >

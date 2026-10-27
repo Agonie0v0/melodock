@@ -463,6 +463,9 @@ export function BotSettings() {
         ))}
       </section>
       <div className="settings-save">
+        <button className="primary" disabled={busy} type="submit">
+          {busy ? "正在处理…" : "保存通知配置"}
+        </button>
         {error && (
           <p role="alert" className="log-error">
             {error}
@@ -472,9 +475,6 @@ export function BotSettings() {
         {dirty && (
           <p className="muted">有未保存的修改，可先测试连接，保存后生效。</p>
         )}
-        <button className="primary" disabled={busy} type="submit">
-          {busy ? "正在处理…" : "保存通知配置"}
-        </button>
       </div>
     </form>
   );

@@ -314,7 +314,7 @@ export function NavidromeLibrary({
               取消
             </button>
             <button
-              className="primary"
+              className="primary danger"
               disabled={deleting}
               onClick={() => void deleteSong()}
             >
@@ -598,7 +598,9 @@ export function NavidromeLibrary({
                                 onPlay={() => play(track)}
                               />
                             </strong>
-                            <small>{track.artist}</small>
+                            <small className="mobile-meta-sub">
+                              {track.artist}
+                            </small>
                           </span>
                         </div>
                       </td>
@@ -644,32 +646,34 @@ export function NavidromeLibrary({
               </table>
             </div>
           )}
-          {!album && !(mode === "artists" && !query && !artist) && (
-            <div
-              className={
-                layout === "cards"
-                  ? "saved-playlists nav-albums"
-                  : "nav-album-list"
-              }
-            >
-              {albums.map((item) => (
-                <button
-                  key={item.id}
-                  className={
-                    layout === "cards" ? "saved-playlist" : "nav-album-row"
-                  }
-                  onClick={() => void openAlbum(item)}
-                >
-                  <Cover track={item} large />
-                  <strong>{item.name}</strong>
-                  <span>{item.artist || "未知歌手"}</span>
-                  <small>
-                    {item.song_count} 首{item.year ? ` · ${item.year}` : ""}
-                  </small>
-                </button>
-              ))}
-            </div>
-          )}
+          {!album &&
+            !(mode === "artists" && !query && !artist) &&
+            albums.length > 0 && (
+              <div
+                className={
+                  layout === "cards"
+                    ? "saved-playlists nav-albums"
+                    : "nav-album-list"
+                }
+              >
+                {albums.map((item) => (
+                  <button
+                    key={item.id}
+                    className={
+                      layout === "cards" ? "saved-playlist" : "nav-album-row"
+                    }
+                    onClick={() => void openAlbum(item)}
+                  >
+                    <Cover track={item} large />
+                    <strong>{item.name}</strong>
+                    <span>{item.artist || "未知歌手"}</span>
+                    <small>
+                      {item.song_count} 首{item.year ? ` · ${item.year}` : ""}
+                    </small>
+                  </button>
+                ))}
+              </div>
+            )}
           {!album && mode === "artists" && !query && !artist && (
             <div className={`nav-artists nav-artists-${layout}`}>
               {artists.map((item) => (

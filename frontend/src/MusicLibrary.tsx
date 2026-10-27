@@ -368,7 +368,11 @@ export function MusicLibrary({
                               file.name
                             )}
                           </strong>
-                          <small>
+                          <small
+                            className={
+                              file.track ? "mobile-meta-sub" : undefined
+                            }
+                          >
                             {file.track
                               ? `${file.track.artist || "未知歌手"} · ${file.track.album || "未知专辑"}`
                               : file.folder || "."}

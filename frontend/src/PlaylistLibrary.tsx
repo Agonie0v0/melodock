@@ -223,31 +223,32 @@ export function PlaylistLibrary({
                 下载全部
               </button>
             )}
-            {(remote ? current.can_manage !== false : !current.read_only) && (
-              <>
-                <button
-                  className="secondary"
-                  onClick={() => {
-                    setName(current.name);
-                    setError("");
-                    setEditing(true);
-                  }}
-                >
-                  <Pencil />
-                  重命名
-                </button>
-                <button
-                  className="secondary"
-                  onClick={() => {
-                    setError("");
-                    setRemoving(true);
-                  }}
-                >
-                  <Trash2 />
-                  删除歌单
-                </button>
-              </>
-            )}
+            {!current.read_only &&
+              (!remote || current.can_manage !== false) && (
+                <>
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setName(current.name);
+                      setError("");
+                      setEditing(true);
+                    }}
+                  >
+                    <Pencil />
+                    重命名
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setError("");
+                      setRemoving(true);
+                    }}
+                  >
+                    <Trash2 />
+                    删除歌单
+                  </button>
+                </>
+              )}
           </div>
         </div>
       </div>
@@ -359,7 +360,7 @@ export function PlaylistLibrary({
               取消
             </button>
             <button
-              className="primary"
+              className="primary danger"
               disabled={busy}
               onClick={() => void remove()}
             >
