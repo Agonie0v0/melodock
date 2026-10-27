@@ -2238,11 +2238,26 @@ tr.current {
    ========================================================================== */
 .queue-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 15px;
   margin-bottom: 18px;
   font-size: 13px;
+}
+.queue-status-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.queue-status-filter select {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
 }
 .management-toolbar {
   display: flex;

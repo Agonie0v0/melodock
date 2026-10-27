@@ -476,6 +476,127 @@ def fixture_song():
                     work_dir=str(_root / 'music' / 'MiguMusicClient'))
 
 
+@pytest.mark.parametrize('recovery', ['same_source', 'other_source', 'all_failed'])
+def test_failed_download_refreshes_identity_then_matches_enabled_sources(monkeypatch, tmp_path, recovery):
+    from types import SimpleNamespace
+    monkeypatch.setattr(app.original.manager, 'config', copy.deepcopy(app.original.manager.config))
+    song = fixture_song()
+    song.raw_data = {'search': {'id': song.identifier}}
+    song.work_dir = str(tmp_path / 'staging')
+    Path(song.work_dir).mkdir()
+    stale_part = Path(song.work_dir) / 'old.part'
+    stale_part.write_bytes(b'old data must not be appended')
+    refreshed, cover, live, wrong_duration, good = (copy.deepcopy(song) for _ in range(5))
+    cover.singers = 'Another singer'
+    live.song_name += ' (Live)'
+    wrong_duration.duration_s = 150
+    good.source, good.identifier, good.ext, good.bitrate = 'QQMusicClient', 'replacement', 'mp3', 320
+    cfg = {'music_sources': [song.source, 'BrokenMusicClient', good.source], 'global_client_cfg': {'max_retries': 0}}
+    attempts, searches, resolutions = [], [], []
+    def resolve(row, options):
+        resolutions.append(row)
+        return [refreshed]
+    def download(items):
+        item = items[0]
+        attempts.append(item)
+        if item.source == song.source and (recovery != 'same_source' or len(attempts) == 1):
+            raise OSError('expired original address')
+        assert Path(item.work_dir).is_relative_to(Path(song.work_dir))
+        assert Path(item.work_dir) != Path(song.work_dir)
+        assert not list(Path(item.work_dir).iterdir())
+        if recovery == 'all_failed':
+            return []
+        Path(item.save_path).write_bytes(b'replacement audio')
+        return [item]
+    monkeypatch.setattr(engine_worker, 'client_for', lambda *args: SimpleNamespace(
+        download=download, music_clients={song.source: SimpleNamespace(_resolve_candidate=resolve)},
+        requests_overrides={song.source: {}}))
+    def search(config, source, keyword):
+        searches.append(source)
+        assert config['_melokeep_refresh'] and not config.get('_melokeep_candidates')
+        if source == 'BrokenMusicClient':
+            raise RuntimeError('source unavailable')
+        return [cover, live, wrong_duration, good]
+    monkeypatch.setattr(engine_worker, 'search', search)
+    input_path, output_path = tmp_path / 'input', tmp_path / 'output'
+    input_path.write_bytes(pickle.dumps({'song': song, 'config': cfg, 'bytes': 100}))
+    engine_worker._download(input_path, output_path)
+    result = json.loads(output_path.read_text(encoding='utf-8'))
+    assert stale_part.read_bytes() == b'old data must not be appended'
+    assert resolutions == [{'id': song.identifier}]
+    if recovery == 'all_failed':
+        assert result['status'] == 'failed' and '自动匹配' in result['detail']
+        assert searches == ['BrokenMusicClient', 'QQMusicClient']
+        return
+    assert result['status'] == 'complete', result
+    if recovery == 'same_source':
+        assert result['download_source'] == song.source and '重新解析' in result['detail']
+        assert searches == [] and len(attempts) == 2
+    else:
+        assert result['download_source'] == 'QQMusicClient' and result['codec'] == 'mp3'
+        assert '自动换源 QQMusicClient' in result['detail']
+        assert searches == ['BrokenMusicClient', 'QQMusicClient']
+        assert [item.source for item in attempts] == [song.source, song.source, good.source]
+    assert result['bytes'] == len(b'replacement audio')
+    assert Path(result['files'][0]).read_bytes() == b'replacement audio'
+
+
+def test_recovery_rejects_uncertain_recordings_and_does_not_use_disabled_sources(monkeypatch):
+    song = fixture_song()
+    candidate = copy.deepcopy(song)
+    candidate.source = 'QQMusicClient'
+    candidate.singers = ''
+    assert not engine_worker.matches_download(song, candidate)
+    candidate.singers = song.singers
+    candidate.song_name = song.song_name + ' (Live)'
+    assert not engine_worker.matches_download(song, candidate)
+    candidate.song_name, candidate.duration_s = song.song_name, 100
+    assert not engine_worker.matches_download(song, candidate)
+    candidate.duration_s, candidate.singers = song.duration_s, song.singers
+    assert engine_worker.matches_download(song, candidate)
+    monkeypatch.setattr(engine_worker, 'search', lambda *a: pytest.fail('no disabled source search'))
+    monkeypatch.setattr(engine_worker, 'client_for', lambda *a: pytest.fail('no disabled source resolution'))
+    assert list(engine_worker.recovery_candidates({'music_sources': []}, song, lambda message: None)) == []
+
+
+def test_recovered_download_publishes_without_attempt_folder_and_reports_actual_quality(monkeypatch):
+    from types import SimpleNamespace
+    client = TestClient(app.app)
+    song = fixture_song()
+    song.identifier = 'recovery-publication'
+    state = app.app.state.engine_test
+    value = state['remember'](song)
+    def worker(args, **kwargs):
+        payload = pickle.loads(Path(args[-2]).read_bytes())
+        staging = Path(payload['song'].work_dir) / 'recovery-fixture'
+        staging.mkdir()
+        audio = staging / 'recovered.wav'
+        audio.write_bytes(song.downloaded_contents)
+        audio.with_suffix('.lrc').write_text('[00:00]recovered lyrics')
+        Path(args[-1]).write_text(json.dumps({'status': 'complete', 'files': [str(audio)],
+            'download_base': str(staging), 'download_source': 'QQMusicClient', 'download_source_id': 'fresh-id',
+            'codec': 'mp3', 'bitrate': 320, 'detail': '自动换源 QQMusicClient 成功，已保存文件'}), encoding='utf-8')
+        return SimpleNamespace(poll=lambda: 0)
+    monkeypatch.setattr(engine_api.subprocess, 'Popen', worker)
+    result = client.post('/api/downloads', headers=HEADERS,
+                         json=[{'track_id': value['id'], 'quality_id': value['qualities'][0]['id']}])
+    assert result.status_code == 200
+    ident = result.json()[0]['id']
+    for _ in range(100):
+        job = next(job for job in client.get('/api/downloads').json() if job['id'] == ident)
+        if job['status'] in {'complete', 'failed'}:
+            break
+        time.sleep(.05)
+    assert job['status'] == 'complete', job
+    assert job['download_source'] == 'qq' and job['download_source_id'] == 'fresh-id'
+    assert job['quality_label'] == 'MP3 320 kbps'
+    assert job['track']['id'] == value['id']  # Keep the user's playlist identity.
+    path = state['library'].resolve(job['file'])
+    assert not any(part.startswith('recovery-') for part in path.parts)
+    assert path.with_suffix('.lrc').read_text() == '[00:00]recovered lyrics'
+    assert not (app.original.FILE_ROOT / '.partial' / ident).exists()
+
+
 def test_all_sources_save_with_missing_parser_isolated_and_proxy_recommendations():
     client = TestClient(app.app)
     manager = app.original.manager

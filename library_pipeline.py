@@ -968,6 +968,30 @@ class LibraryPipeline:
             stage.unlink(missing_ok=True)
             for output in operation.get('outputs', []):
                 Path(output['stage']).unlink(missing_ok=True)
+        if source != target:
+            self.remove_empty_parents(source.parent)
+
+    def remove_empty_parents(self, directory):
+        """Remove only empty source ancestors, stopping at configured roots."""
+        directory = Path(directory).absolute()
+        if directory.resolve() != directory or any(path.is_symlink() for path in [directory, *directory.parents]):
+            return
+        protected = {root.resolve() for root in self.roots()}
+        settings = self.settings()
+        if settings['watch_enabled']:
+            protected.update(self.watch_roots(settings))
+        # Keep internal staging roots even after the last task folder is emptied.
+        protected.update(path for path in directory.parents if path.name in INTERNAL_DIRS)
+        boundaries = [root for root in protected if directory.is_relative_to(root)]
+        if not boundaries:
+            return
+        boundary = max(boundaries, key=lambda path: len(path.parts))
+        while directory != boundary:
+            try:
+                directory.rmdir()
+            except OSError:
+                break
+            directory = directory.parent
 
     def publish_derived(self, job, item, source):
         operation = {'id': job['id'] + ':' + item['id'], 'job_id': job['id'], 'asset_id': item['id'],

@@ -90,7 +90,7 @@ def apply(pipeline, job):
 
 
 def test_preview_apply_move_restore_preserves_audio_and_legacy_links(library):
-    source = wav(library.old.FILE_ROOT / 'incoming' / 'old.wav')
+    source = wav(library.old.FILE_ROOT / 'incoming' / 'album' / 'old.wav')
     local_library.write_metadata(source, {'title': '歌曲', 'artist': '歌手', 'album': '专辑', 'track_number': '3/12'})
     source.with_suffix('.lrc').write_text('[00:00]歌词', encoding='utf-8')
     original = source.read_bytes()
@@ -107,6 +107,8 @@ def test_preview_apply_move_restore_preserves_audio_and_legacy_links(library):
     assert completed['status'] == 'complete', completed
     target = library.resolve(token)
     assert target.name == '03 - 歌曲.wav' and not source.exists()
+    assert not source.parent.exists() and not source.parent.parent.exists()
+    assert library.old.FILE_ROOT.is_dir() and library.library_root().is_dir()
     assert library.resolve(legacy) == target and target.read_bytes() == original
     assert target.with_suffix('.lrc').read_text(encoding='utf-8') == '[00:00]歌词'
     assert library.get('download', 'd')['file'] == token
@@ -117,6 +119,28 @@ def test_preview_apply_move_restore_preserves_audio_and_legacy_links(library):
     assert restored['status'] == 'restored', restored
     assert source.read_bytes() == original and not target.exists()
     assert library.resolve(token) == source
+
+
+def test_empty_folder_cleanup_preserves_files_roots_and_watched_directory(library):
+    root = library.old.FILE_ROOT
+    watched = root / 'incoming'
+    leaf = watched / 'album' / 'disc'
+    leaf.mkdir(parents=True)
+    settings = library.settings()
+    library.put('library_setting', 'config', {**settings, 'watch_enabled': True})
+    library.remove_empty_parents(leaf)
+    assert watched.is_dir() and not (watched / 'album').exists()
+    leaf.mkdir(parents=True)
+    (leaf / '.keep').write_text('keep')
+    library.remove_empty_parents(leaf)
+    assert (leaf / '.keep').read_text() == 'keep'
+    library.library_root().mkdir(exist_ok=True)
+    library.remove_empty_parents(library.library_root())
+    assert library.library_root().is_dir() and root.is_dir()
+    external = root.parent / 'outside'
+    external.mkdir()
+    library.remove_empty_parents(external)
+    assert external.is_dir()
 
 
 def test_manual_edit_lyrics_cover_locks_and_restore(library):

@@ -1330,6 +1330,53 @@ try {
     .getByRole("button", { name: /下载队列/ })
     .first()
     .click();
+  const statusFixtures = ["complete", "failed", "paused"].map((status) => ({
+    ...jobs[0],
+    id: `filter-${status}`,
+    track: { ...track, title: `筛选测试 ${status}` },
+    status,
+  }));
+  jobs.push(...statusFixtures);
+  await page.getByRole("button", { name: "刷新进度", exact: true }).click();
+  await expect(page.locator(".download-row")).toHaveCount(4);
+  const queueStatus = page.getByLabel("筛选下载状态");
+  await queueStatus.selectOption("failed");
+  await expect(page.locator(".download-row")).toHaveCount(1);
+  await expect(page.locator(".download-row")).toContainText("筛选测试 failed");
+  await page.getByLabel("全选下载任务").check();
+  await expect(page.getByText("已选 1 项", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "继续选中", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "清理已结束记录", exact: true }),
+  ).toBeDisabled();
+  await queueStatus.selectOption("paused");
+  await expect(page.locator(".download-row")).toHaveCount(1);
+  await expect(page.getByLabel("全选下载任务")).not.toBeChecked();
+  await queueStatus.selectOption("complete");
+  await expect(page.locator(".download-row")).toContainText(
+    "筛选测试 complete",
+  );
+  await page.getByLabel("全选下载任务").check();
+  await expect(page.getByText("已选 1 项", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "../output/test-ui-queue-filter.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.screenshot({ path: "../output/test-ui-queue-filter-mobile.png" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await queueStatus.selectOption("cancelled");
+  await expect(page.locator(".download-row")).toHaveCount(0);
+  await expect(page.getByText(/当前没有“已取消”的任务/)).toBeVisible();
+  await queueStatus.selectOption("all");
+  await expect(page.getByLabel("全选下载任务")).not.toBeChecked();
+  jobs.splice(1);
+  await page.getByRole("button", { name: "刷新进度", exact: true }).click();
+  await expect(page.locator(".download-row")).toHaveCount(1);
   await page.getByLabel("暂停下载").click();
   await page.getByRole("button", { name: "继续下载", exact: true }).waitFor();
   assert.equal(jobs[0].status, "paused");
@@ -2387,12 +2434,14 @@ try {
     "2026-10-10 14:00:00",
   );
   await page.getByLabel("日志级别").selectOption("error");
-  assert.equal(await page.locator(".log-row").count(), 1);
+  await expect(page.locator(".log-row")).toHaveCount(
+    logEntries.filter((entry) => entry.level === "error").length,
+  );
   await page.getByLabel("日志类别").selectOption("search");
-  assert.equal(await page.locator(".log-row").count(), 0);
+  await expect(page.locator(".log-row")).toHaveCount(0);
   await page.getByLabel("日志类别").selectOption("all");
   await page.getByLabel("搜索日志").fill("download-fixture");
-  assert.equal(await page.locator(".log-row").count(), 1);
+  await expect(page.locator(".log-row")).toHaveCount(1);
   const exported = page.waitForEvent("download");
   await page.getByRole("button", { name: "导出当前日志", exact: true }).click();
   const download = await exported;

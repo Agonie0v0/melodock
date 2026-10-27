@@ -937,6 +937,9 @@ def install(old, root):
                     completed = [Path(p).resolve() for p in outcome.get('files', [])]
                     if not completed or any(not p.is_relative_to(staging.resolve()) for p in completed):
                         raise ValueError('下载器文件不在该任务目录中')
+                    download_base = Path(outcome.get('download_base') or staging).resolve()
+                    if not download_base.is_relative_to(staging.resolve()):
+                        raise ValueError('下载器保存目录不在该任务目录中')
                     moved = {}
                     intended_dir.mkdir(parents=True, exist_ok=True)
                     publish_stems = {}
@@ -945,7 +948,7 @@ def install(old, root):
                         if len(completed) > 1:
                             stem += f'-{index}'
                         siblings = [p for p in audio_path.parent.iterdir() if p.is_file() and p.with_suffix('') == audio_path.with_suffix('')]
-                        parent = intended_dir / audio_path.relative_to(staging).parent
+                        parent = intended_dir / audio_path.relative_to(download_base).parent
                         candidate, collision = stem, 0
                         while any((parent / (candidate + p.suffix)).exists() for p in siblings):
                             collision += 1
@@ -957,7 +960,7 @@ def install(old, root):
                         resolved = file.resolve()
                         if resolved not in completed and not any(file.with_suffix('') == p.with_suffix('') for p in completed):
                             continue
-                        relative = file.relative_to(staging)
+                        relative = file.relative_to(download_base)
                         audio_match = next((p for p in completed if file.with_suffix('') == p.with_suffix('')), None)
                         if audio_match:
                             relative = relative.with_name(publish_stems[audio_match] + file.suffix)
@@ -972,6 +975,13 @@ def install(old, root):
                         raise ValueError('下载器没有保存音频文件')
                     job.update(status='complete', bytes=audio.stat().st_size, total_bytes=audio.stat().st_size,
                                file=file_token(audio), detail=outcome['detail'])
+                    if outcome.get('download_source'):
+                        actual = copy.copy(song)
+                        actual.ext, actual.bitrate = outcome.get('codec'), outcome.get('bitrate')
+                        quality = track(actual)['qualities'][0]
+                        job.update(download_source=source_id(outcome['download_source']),
+                                   download_source_id=outcome.get('download_source_id'),
+                                   quality_id=quality['id'], quality_label=quality['label'])
                     summaries = outcome.get('metadata', [])
                     for index, original_path in enumerate(completed):
                         final = moved.get(original_path)

@@ -56,6 +56,7 @@ export interface DownloadJob {
   track: Track;
   quality_id: string;
   quality_label: string;
+  download_source?: string;
   status: string;
   bytes: number;
   total_bytes: number | null;

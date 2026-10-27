@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import pickle
+import uuid
 import sys
 import threading
 import time
@@ -193,6 +194,64 @@ def playlist(config, url):
     return client_for(config).parseplaylist(url)
 
 
+def matches_download(reference, candidate):
+    """Only substitute the same recording, never a fuzzy title-only match."""
+    from metadata_scraper import normalized, version_flags
+    if candidate.episodes or not candidate.with_valid_download_url:
+        return False
+    if not normalized(reference.song_name) or not normalized(reference.singers):
+        return False
+    if (normalized(reference.song_name) != normalized(candidate.song_name)
+            or normalized(reference.singers) != normalized(candidate.singers)
+            or version_flags(reference.song_name) != version_flags(candidate.song_name)):
+        return False
+    duration, other = float(reference.duration_s or 0), float(candidate.duration_s or 0)
+    return not (duration and other) or abs(duration - other) <= max(5, duration * .02)
+
+
+def recovery_candidates(config, song, report):
+    """Refresh the original identity first, then search each enabled source once."""
+    from metadata_scraper import normalized
+    cfg = copy.deepcopy(config)
+    cfg['_melokeep_refresh'] = True
+    cfg.pop('_melokeep_candidates', None)
+    cfg.pop('_melokeep_resolve', None)
+    # Recovery only needs a few results; don't inherit an interactive search of hundreds.
+    for options in [cfg.setdefault('global_client_cfg', {}), *cfg.get('init_music_clients_cfg', {}).values()]:
+        options.update(search_size_per_source=5, search_size_per_page=5, strict_limit_search_size_per_page=True)
+    sources = list(dict.fromkeys(cfg.get('music_sources', [])))
+    if song.source in sources:
+        report(f'原地址下载失败，正在重新解析 {song.source} 的同一曲目')
+        try:
+            provider_client = client_for(cfg, song.source)
+            provider = provider_client.music_clients[song.source]
+            row = song.raw_data.get('search')
+            if row and hasattr(provider, '_resolve_candidate'):
+                refreshed = provider._resolve_candidate(copy.deepcopy(row), provider_client.requests_overrides[song.source])
+            else:
+                refreshed = search(cfg, song.source, f'{song.song_name} {song.singers}')
+            for candidate in refreshed:
+                if str(candidate.identifier) == str(song.identifier) and matches_download(song, candidate):
+                    yield candidate, f'重新解析 {song.source}'
+                    break
+        except Exception as error:
+            report(f'{song.source} 重新解析失败（{type(error).__name__}），继续尝试其他音源')
+    for source in sources:
+        if source == song.source:
+            continue
+        report(f'正在从 {source} 搜索匹配曲目')
+        try:
+            candidates = [candidate for candidate in search(cfg, source, f'{song.song_name} {song.singers}')
+                          if matches_download(song, candidate)]
+            candidates.sort(key=lambda candidate: normalized(candidate.album) != normalized(song.album))
+            if not candidates:
+                report(f'{source} 未找到歌名、歌手、时长和版本一致的可用曲目')
+            for candidate in candidates[:2]:
+                yield candidate, f'自动换源 {source}'
+        except Exception as error:
+            report(f'{source} 匹配失败（{type(error).__name__}），继续尝试其他音源')
+
+
 def download(input_path, output_path):
     from legacy import app as original
     with capture_logs(str(output_path) + '.log', 'download', Path(input_path).stem):
@@ -214,7 +273,6 @@ def _download(input_path, output_path):
     import resumable_download
     resumable_download.install()
     original.manager.config = config
-    client = client_for(config, song.source)
     state = {'status': 'downloading', 'bytes': payload.get('bytes', 0),
              'total_bytes': payload.get('total_bytes'), 'detail': ''}
     lock = threading.RLock()
@@ -264,26 +322,54 @@ def _download(input_path, output_path):
         # Full SongInfo survives intact: bytes, headers, cookies, HLS/custom
         # stream objects and source-specific download overrides all stay here.
         retries = max(0, min(5, int(config.get('global_client_cfg', {}).get('max_retries', 3))))
-        completed = []
-        for attempt in range(retries + 1):
-            state['detail'] = f'原音源下载器，第 {attempt + 1} 次尝试'
+        def report(message):
+            state['detail'] = message
+            original.pushlog('warning', message)
             publish(True)
-            completed = client.download([copy.deepcopy(song)]) or []
-            if completed:
-                break
+
+        def attempt_download(candidate, label, attempts):
+            for attempt in range(attempts):
+                state['detail'] = f'{label}，第 {attempt + 1} 次尝试'
+                publish(True)
+                try:
+                    completed = client_for(config, candidate.source).download([copy.deepcopy(candidate)]) or []
+                    if completed and all(Path(item.save_path).is_file() and Path(item.save_path).stat().st_size for item in completed):
+                        return completed
+                except Exception as error:
+                    report(f'{label} 下载失败（{type(error).__name__}）')
+            return []
+
+        completed = attempt_download(song, '原音源下载器', retries + 1)
+        used, recovery = song, ''
         if not completed:
-            raise RuntimeError('原音源下载器未返回文件；请查看原版日志或更换解析配置')
+            for candidate, label in recovery_candidates(config, song, report):
+                # A different URL/version must never append to another attempt's bytes.
+                directory = Path(song.work_dir) / ('recovery-' + uuid.uuid4().hex)
+                directory.mkdir(parents=True, exist_ok=True)
+                candidate.work_dir, candidate._save_path = str(directory), None
+                state.update(bytes=0, total_bytes=None)
+                completed = attempt_download(candidate, label, 1)
+                if completed:
+                    used, recovery = candidate, label
+                    break
+        if not completed:
+            raise RuntimeError('原音源下载及自动匹配均未获得文件，请查看运行日志或检查已启用音源的 Cookie、代理与解析配置')
         files = [str(Path(item.save_path).resolve()) for item in completed]
         if not all(Path(p).is_file() and Path(p).stat().st_size for p in files):
             raise RuntimeError('原音源下载器返回的文件不存在或为空')
         from metadata_scraper import from_song
         state.update(status='complete', files=files, metadata=[from_song(item) for item in completed],
-                     bytes=sum(Path(p).stat().st_size for p in files), detail='已由原音源下载器保存')
+                     bytes=sum(Path(p).stat().st_size for p in files),
+                     download_source=used.source, download_source_id=str(used.identifier),
+                     download_base=str(used.work_dir),
+                     codec=str(used.ext or ''), bitrate=used.bitrate,
+                     detail=f'{recovery}成功，已保存文件' if recovery else '已由原音源下载器保存')
     except Exception as error:
         # Avoid exposing signed URLs or account material through progress APIs.
         original.pushlog('error', f'原引擎下载失败\n{traceback.format_exc()}')
         state.update(status='failed', detail=str(error) if 'http' not in str(error) else '原音源下载失败，请检查网络或解析配置')
     finally:
+        Progress.update, Progress.advance = original_update, original_advance
         publish(True)
 
 

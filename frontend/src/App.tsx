@@ -137,6 +137,7 @@ export function App() {
   const [playlistRefresh, setPlaylistRefresh] = useState(0);
   const allPlaylists = [...savedPlaylists, ...remotePlaylists];
   const [selectedJobs, setSelectedJobs] = useState<string[]>([]);
+  const [queueStatus, setQueueStatus] = useState("all");
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [libraryTab, setLibraryTab] = useState("local");
   const [processingTab, setProcessingTab] = useState("workbench");
@@ -956,7 +957,10 @@ export function App() {
     paused: "已暂停",
     cancelled: "已取消",
   };
-  const chosenJobs = jobs.filter((job) => selectedJobs.includes(job.id));
+  const visibleJobs = jobs.filter(
+    (job) => queueStatus === "all" || job.status === queueStatus,
+  );
+  const chosenJobs = visibleJobs.filter((job) => selectedJobs.includes(job.id));
   const stopped = (job: DownloadJob) =>
     ["complete", "failed", "paused", "cancelled"].includes(job.status);
   async function manageJobs(action: string, targets: DownloadJob[]) {
@@ -2137,7 +2141,28 @@ export function App() {
           {view === "queue" && (
             <section className="view">
               <div className="queue-toolbar">
-                <span>{jobs.length} 首曲目</span>
+                <label className="queue-status-filter">
+                  <span>状态</span>
+                  <select
+                    aria-label="筛选下载状态"
+                    value={queueStatus}
+                    onChange={(e) => {
+                      setQueueStatus(e.target.value);
+                      setSelectedJobs([]);
+                    }}
+                  >
+                    <option value="all">全部状态（{jobs.length}）</option>
+                    {Object.entries(statusLabels).map(([status, label]) => (
+                      <option key={status} value={status}>
+                        {label}（
+                        {jobs.filter((job) => job.status === status).length}）
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span aria-live="polite">
+                  {visibleJobs.length} / {jobs.length} 首曲目
+                </span>
                 <button
                   className="secondary"
                   onClick={() =>
@@ -2149,19 +2174,22 @@ export function App() {
                   刷新进度
                 </button>
               </div>
-              {!!jobs.length && (
+              {!!visibleJobs.length && (
                 <div className="management-toolbar">
                   <label className="check-label">
                     <input
                       type="checkbox"
                       aria-label="全选下载任务"
                       checked={
-                        jobs.length > 0 && chosenJobs.length === jobs.length
+                        visibleJobs.length > 0 &&
+                        chosenJobs.length === visibleJobs.length
                       }
                       disabled={managing}
                       onChange={(e) =>
                         setSelectedJobs(
-                          e.target.checked ? jobs.map((job) => job.id) : [],
+                          e.target.checked
+                            ? visibleJobs.map((job) => job.id)
+                            : [],
                         )
                       }
                     />
@@ -2239,13 +2267,13 @@ export function App() {
                     className="secondary"
                     disabled={
                       managing ||
-                      !jobs.some((job) =>
+                      !visibleJobs.some((job) =>
                         ["complete", "cancelled"].includes(job.status),
                       )
                     }
                     onClick={() =>
                       confirmRemoval(
-                        jobs.filter((job) =>
+                        visibleJobs.filter((job) =>
                           ["complete", "cancelled"].includes(job.status),
                         ),
                       )
@@ -2259,7 +2287,7 @@ export function App() {
                 先暂停或取消进行中的任务，再移除记录。移除记录会保留已下载的文件。
               </p>
               {managementError && <p role="alert">{managementError}</p>}
-              {jobs.map((job) => (
+              {visibleJobs.map((job) => (
                 <div className="download-row" key={job.id}>
                   <div className="job-selection">
                     <input
@@ -2289,6 +2317,8 @@ export function App() {
                     </strong>
                     <small>
                       {job.track.artist} · {job.quality_label}
+                      {job.download_source &&
+                        ` · 下载音源：${sources.find((source) => source.id === job.download_source)?.label || job.download_source}`}
                     </small>
                     <div className="progress">
                       <span
@@ -2399,6 +2429,12 @@ export function App() {
               {!jobs.length && (
                 <div className="empty">
                   选择曲目和音质后，下载任务将在这里显示。
+                </div>
+              )}
+              {!!jobs.length && !visibleJobs.length && (
+                <div className="empty" role="status">
+                  当前没有“{statusLabels[queueStatus]}
+                  ”的任务，可切换状态查看其他下载。
                 </div>
               )}
             </section>
