@@ -810,15 +810,18 @@
 }
 .global-mini-player {
   position: sticky;
-  bottom: 12px;
+  bottom: max(16px, env(safe-area-inset-bottom));
   z-index: 20;
-  margin-top: 16px;
+  width: min(100%, 1000px);
+  margin: 16px auto 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.5fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) auto;
   align-items: center;
   gap: 16px;
   padding: 10px 16px;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: var(--shadow);
@@ -857,10 +860,55 @@
   min-width: 0;
   margin: 0;
 }
-.global-mini-actions {
+.global-mini-actions,
+.global-mini-transport,
+.global-mini-utilities {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.global-mini-volume {
+  position: relative;
+}
+.global-mini-volume summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+}
+.global-mini-volume summary::-webkit-details-marker {
+  display: none;
+}
+.global-mini-volume summary:hover,
+.global-mini-volume[open] summary {
+  background: var(--hover);
+  color: var(--ink);
+}
+.global-mini-volume summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.global-mini-volume summary svg {
+  width: 18px;
+  height: 18px;
+}
+.global-mini-volume-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 16px);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.global-mini-volume-panel .player-extras {
+  margin: 0;
 }
 .global-mini-actions .pause {
   width: 36px;
@@ -875,6 +923,49 @@
   .global-mini-timeline {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+}
+@media (max-width: 600px) {
+  .global-mini-player {
+    gap: 6px 12px;
+  }
+  .global-mini-track .cover {
+    width: 36px;
+    height: 36px;
+  }
+  .global-mini-track {
+    gap: 8px;
+  }
+  .global-mini-actions {
+    display: contents;
+  }
+  .global-mini-transport,
+  .global-mini-utilities {
+    justify-content: flex-end;
+    gap: 2px;
+  }
+  .global-mini-transport {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .global-mini-utilities {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .global-mini-timeline {
+    grid-column: 1;
+    gap: 4px;
+    font-size: 10px;
+  }
+  .global-mini-timeline span {
+    min-width: 0;
+  }
+  .global-mini-timeline input {
+    width: 100%;
+    min-width: 0;
+  }
+  .global-mini-volume-panel {
+    right: -76px;
   }
 }
 @media (max-width: 600px) {

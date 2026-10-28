@@ -2688,39 +2688,51 @@ export function App() {
                   <span>{clock(duration)}</span>
                 </div>
                 <div className="global-mini-actions">
-                  <Button label="上一首全局曲目" onClick={() => step(-1)}>
-                    <SkipBack />
-                  </Button>
-                  <button
-                    type="button"
-                    className="pause"
-                    aria-label={playing ? "暂停全局播放" : "继续全局播放"}
-                    disabled={loadingPlay}
-                    onClick={() => void toggle()}
-                  >
-                    {loadingPlay ? (
-                      <span className="loading-dot" />
-                    ) : playing ? (
-                      <Pause />
-                    ) : (
-                      <Play />
-                    )}
-                  </button>
-                  <Button label="下一首全局曲目" onClick={() => step(1)}>
-                    <SkipForward />
-                  </Button>
-                  <Button
-                    label="查看待播列表"
-                    onClick={() => setShowPlaylist(true)}
-                  >
-                    <ListMusic />
-                  </Button>
-                  <Button
-                    label="展开全屏播放器"
-                    onClick={() => setView("player")}
-                  >
-                    <Expand />
-                  </Button>
+                  <div className="global-mini-transport">
+                    <Button label="上一首全局曲目" onClick={() => step(-1)}>
+                      <SkipBack />
+                    </Button>
+                    <button
+                      type="button"
+                      className="pause"
+                      aria-label={playing ? "暂停全局播放" : "继续全局播放"}
+                      disabled={loadingPlay}
+                      onClick={() => void toggle()}
+                    >
+                      {loadingPlay ? (
+                        <span className="loading-dot" />
+                      ) : playing ? (
+                        <Pause />
+                      ) : (
+                        <Play />
+                      )}
+                    </button>
+                    <Button label="下一首全局曲目" onClick={() => step(1)}>
+                      <SkipForward />
+                    </Button>
+                  </div>
+                  <div className="global-mini-utilities">
+                    <details className="global-mini-volume">
+                      <summary aria-label="调节全局音量" title="调节音量">
+                        {volume ? <Volume2 /> : <VolumeX />}
+                      </summary>
+                      <div className="global-mini-volume-panel">
+                        {volumeControl}
+                      </div>
+                    </details>
+                    <Button
+                      label="查看待播列表"
+                      onClick={() => setShowPlaylist(true)}
+                    >
+                      <ListMusic />
+                    </Button>
+                    <Button
+                      label="展开全屏播放器"
+                      onClick={() => setView("player")}
+                    >
+                      <Expand />
+                    </Button>
+                  </div>
                 </div>
               </aside>
             )}

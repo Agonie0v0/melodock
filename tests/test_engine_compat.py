@@ -102,6 +102,7 @@ def test_candidate_playback_and_lyrics_share_resolution_and_keep_id(monkeypatch)
         calls.append(cfg['_melokeep_resolve'])
         await asyncio.sleep(.05)
         final = quality_song('flac', 26012257, source)
+        final.identifier = song.identifier
         final.lyric = 'resolved lyrics'
         return [final]
     monkeypatch.setattr(coordinator, 'search', resolve)
@@ -136,9 +137,118 @@ def test_oversized_preloaded_audio_stays_on_disk_and_can_still_stream(monkeypatc
     assert app.original.getsong(value['id']) is None
     monkeypatch.setattr(app.original.manager, 'get', lambda: SimpleNamespace(music_clients={song.source: object()}))
     request = Request({'type': 'http', 'headers': []})
-    response = endpoint('/api/stream/{sid}', 'GET')(value['id'], request)
+    response = asyncio.run(endpoint('/api/stream/{sid}', 'GET')(value['id'], request))
     assert len(response.body) == len(song.downloaded_contents)
     assert app.original.getsong(value['id']) is None
+
+
+@pytest.mark.parametrize('source,native_row', [('QQMusicClient', True), ('MiguMusicClient', True), ('MiguMusicClient', False)])
+def test_expired_playlist_audio_is_resolved_again_after_memory_eviction(monkeypatch, source, native_row):
+    song = fixture_song()
+    song.source = source
+    song.identifier = f'expired-playlist-{source}-{native_row}'
+    song.downloaded_contents = None
+    song.download_url = 'https://example.org/expired.wav'
+    song.raw_data = {'search': {'id': song.identifier}} if native_row else {}
+    state = app.app.state.engine_test
+    value = state['remember'](song)
+    record = state['library'].get('track', value['id'])
+    record.update(resolved_at=1, resolved_until=2)
+    state['library'].put('track', value['id'], record)
+    # Loading a serialized song must not renew its expired URL's lifetime.
+    with app.original.SONG_LOCK:
+        app.original.SONGS.pop(value['id'], None)
+    calls = []
+    async def resolve(cfg, source, keyword, publish):
+        calls.append((cfg, source, keyword))
+        fresh = copy.deepcopy(song)
+        fresh.download_url = 'https://example.org/fresh.wav'
+        return [fresh]
+    monkeypatch.setattr(state['coordinator'], 'search', resolve)
+    monkeypatch.setitem(app.original.manager.config, 'music_sources', [song.source])
+    client = TestClient(app.app)
+    response = client.post(f'/api/tracks/{value["id"]}/playback', headers=HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()['id'] == value['id']
+    assert len(calls) == 1 and calls[0][0]['_melokeep_refresh']
+    assert bool(calls[0][0].get('_melokeep_resolve')) == (native_row and source == 'QQMusicClient')
+    assert calls[0][2] == (song.identifier if native_row and source == 'QQMusicClient' else f'{song.song_name} {song.singers}')
+    assert state['song_for'](value['id']).download_url == 'https://example.org/fresh.wav'
+    assert client.post(f'/api/tracks/{value["id"]}/playback', headers=HEADERS).status_code == 200
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('legacy_job', [True, False])
+def test_downloaded_playlist_plays_offline_after_queue_cleanup_and_library_move(monkeypatch, legacy_job):
+    song = fixture_song()
+    song.identifier = f'offline-playlist-{legacy_job}'
+    state = app.app.state.engine_test
+    value = state['remember'](song)
+    library = state['library']
+    path = app.original.FILE_ROOT / f'offline-{legacy_job}.wav'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(song.downloaded_contents)
+    path.with_suffix('.lrc').write_text('[00:00]offline lyrics', encoding='utf-8')
+    asset = library.asset(path, engine_api.song_metadata(song))
+    if legacy_job:
+        library.put('download', f'offline-{legacy_job}', {'id': f'offline-{legacy_job}', 'status': 'complete',
+                    'track': value, 'file': library.token(path)})
+    monkeypatch.setitem(app.original.manager.config, 'music_sources', [])
+    monkeypatch.setattr(state['coordinator'], 'search', lambda *a: pytest.fail('offline playback must not resolve'))
+    client = TestClient(app.app)
+    def check():
+        response = client.post(f'/api/tracks/{value["id"]}/playback', headers=HEADERS)
+        assert response.status_code == 200, response.text
+        prepared = response.json()
+        assert prepared['id'] == value['id'] and prepared['source'] == value['source']
+        assert prepared['playback']['url'].startswith('/api/files/audio?')
+        audio = client.get(prepared['playback']['url'], headers={'Range': 'bytes=0-19'})
+        assert audio.status_code == 206 and audio.content == song.downloaded_contents[:20]
+        assert client.get(f'/api/tracks/{value["id"]}/lyrics').json()['text'] == '[00:00]offline lyrics'
+        assert client.get(f'/api/stream/{value["id"]}').content == song.downloaded_contents
+    check()
+    library.remove('download', f'offline-{legacy_job}')
+    moved = path.with_name(f'organized-{legacy_job}.wav')
+    path.rename(moved)
+    path.with_suffix('.lrc').rename(moved.with_suffix('.lrc'))
+    library.relocate(asset['id'], moved)
+    check()
+    # A different quality of the same platform song uses the persistent association.
+    other = copy.deepcopy(song)
+    other.ext = 'flac'
+    other_track = state['remember'](other)
+    prepared = client.post(f'/api/tracks/{other_track["id"]}/playback', headers=HEADERS).json()
+    assert prepared['id'] == other_track['id'] and prepared['playback']['codec'] == 'wav'
+    assert library.get('downloaded', other_track['id']) == library.token(moved)
+
+
+def test_stream_refreshes_early_expiring_url_once(monkeypatch):
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+    state = app.app.state.engine_test
+    song = fixture_song()
+    song.source = 'QQMusicClient'
+    song.identifier = 'early-expiration'
+    song.downloaded_contents = None
+    song.download_url = 'https://example.org/expired.wav'
+    song.raw_data = {'search': {'id': song.identifier}}
+    value = state['remember'](song)
+    monkeypatch.setitem(app.original.manager.config, 'music_sources', [song.source])
+    async def resolve(cfg, source, keyword, publish):
+        fresh = copy.deepcopy(song)
+        fresh.download_url = 'https://example.org/fresh.wav'
+        return [fresh]
+    monkeypatch.setattr(state['coordinator'], 'search', resolve)
+    calls = []
+    def stream(sid, request, song):
+        calls.append(song.download_url)
+        if len(calls) == 1:
+            raise HTTPException(502, 'expired')
+        return Response(b'audio', media_type='audio/wav')
+    monkeypatch.setattr(app.original, 'stream_song', stream)
+    response = TestClient(app.app).get(f'/api/stream/{value["id"]}')
+    assert response.status_code == 200 and response.content == b'audio'
+    assert calls == ['https://example.org/expired.wav', 'https://example.org/fresh.wav']
 
 
 def test_source_budget_terminates_blocked_child_and_removes_ipc(monkeypatch):

@@ -1437,6 +1437,70 @@ try {
       .locator("audio")
       .evaluate((audio) => audio.src.includes("/files/audio")),
   );
+  const miniPlayer = page.getByRole("complementary", { name: "全局播放控制" });
+  for (const width of [320, 390, 768, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(miniPlayer).toBeVisible();
+    const layout = await miniPlayer.evaluate((element) => {
+      const bar = element.getBoundingClientRect();
+      const main = element.closest("main").getBoundingClientRect();
+      return {
+        bar: bar.toJSON(),
+        main: main.toJSON(),
+        background: getComputedStyle(element).backgroundColor,
+        controls: [
+          ...element.querySelectorAll(
+            "button, summary, .global-mini-timeline input",
+          ),
+        ].map((control) => control.getBoundingClientRect().toJSON()),
+      };
+    });
+    assert.ok(layout.bar.width <= 1001, `compact player at ${width}`);
+    assert.ok(
+      Math.abs(
+        layout.bar.x +
+          layout.bar.width / 2 -
+          layout.main.x -
+          layout.main.width / 2,
+      ) < 2,
+    );
+    assert.ok(
+      layout.bar.x >= 0 && layout.bar.right <= width,
+      `player stays within ${width}`,
+    );
+    assert.match(layout.background, /0\.76/, "player surface is translucent");
+    for (const control of layout.controls) {
+      assert.ok(
+        control.width > 0 &&
+          control.x >= layout.bar.x &&
+          control.right <= layout.bar.right,
+        `player controls fit at ${width}`,
+      );
+    }
+    const volumeToggle = miniPlayer.getByLabel("调节全局音量", { exact: true });
+    await volumeToggle.click();
+    const volume = miniPlayer.getByRole("slider", {
+      name: "音量",
+      exact: true,
+    });
+    await expect(volume).toBeVisible();
+    await volume.fill("0.28");
+    await expect
+      .poll(() => page.locator("audio").evaluate((a) => a.volume))
+      .toBe(0.28);
+    await miniPlayer.getByLabel("静音", { exact: true }).click();
+    await expect
+      .poll(() => page.locator("audio").evaluate((a) => a.volume))
+      .toBe(0);
+    await miniPlayer.getByLabel("取消静音", { exact: true }).click();
+    if ([320, 390, 1440].includes(width)) {
+      await page.screenshot({
+        path: `../output/test-ui-mini-player-${width}.png`,
+      });
+    }
+    await volumeToggle.click();
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "正在播放", exact: true }).click();
   await expect(page.locator(".full-lyrics button")).toHaveCount(3);
   await page.locator(".full-lyrics button").nth(1).click();

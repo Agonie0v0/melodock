@@ -233,7 +233,7 @@ def install(old, root):
     song_bytes = 0
     song_budget = max(1, int(os.environ.get('MELOKEEP_SONG_CACHE_MB', '32'))) * 1024 * 1024
 
-    def remember(song, sid=None):
+    def remember(song, sid=None, *, restored=False):
         nonlocal song_bytes
         value = track(song, sid)
         sid = value['id']
@@ -254,8 +254,9 @@ def install(old, root):
                 temp.write_bytes(serialized)
                 os.replace(temp, path)
                 resolved_at = time.time() if not song.raw_data.get('_melokeep_candidate') else 0
-                put('track', sid, {'track': value, 'resolved_at': resolved_at,
-                                   'resolved_until': resolved_at + 60 if resolved_at else 0})
+                if not restored or not get('track', sid):
+                    put('track', sid, {'track': value, 'resolved_at': resolved_at,
+                                       'resolved_until': resolved_at + 60 if resolved_at else 0})
                 saved_songs[sid] = fingerprint
                 saved_songs.move_to_end(sid)
                 while len(saved_songs) > 3000:
@@ -290,7 +291,7 @@ def install(old, root):
         path = private / f'{sid}.song'
         if path.exists():
             song = pickle.loads(path.read_bytes())
-            remember(song, sid)
+            remember(song, sid, restored=True)
             return song
         stored = get('track', sid)
         if not stored:
@@ -649,31 +650,94 @@ def install(old, root):
                         10, lambda: asyncio.create_task(search_stop(ident)))
         return StreamingResponse(events(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
-    async def resolved_track(sid):
+    def download_key(value):
+        return hashlib.sha256(f"{value['source']}|{value['source_id']}".encode()).hexdigest()
+
+    def downloaded_file(sid, record):
+        if not record or record.get('local_path') or record.get('navidrome_id'):
+            return None
+        value = record['track']
+        key = download_key(value)
+        def tokens():
+            yield get('downloaded', sid)
+            yield get('downloaded', key)
+            # Recover downloads made before persistent song/file associations existed.
+            for job in values('download'):
+                if (job.get('status') == 'complete' and job.get('file')
+                        and (job['track']['id'] == sid or download_key(job['track']) == key)):
+                    yield job['file']
+            # Source metadata survives clearing completed download records.
+            with db_lock:
+                assets = db.execute('SELECT id,source FROM library_assets').fetchall()
+            for ident, body in assets:
+                source = json.loads(body)
+                if (source_id(source.get('source', '')) == value['source']
+                        and str(source.get('source_id', '')) == value['source_id']):
+                    yield 'asset:' + ident
+        for token in tokens():
+            if not token:
+                continue
+            try:
+                target = resolve_library_file(token)
+                if target.suffix.lower() in local_library.AUDIO_EXTENSIONS and target.stat().st_size:
+                    token = file_token(target)
+                    put('downloaded', sid, token)
+                    put('downloaded', key, token)
+                    return token
+            except (HTTPException, OSError):
+                continue
+        return None
+
+    async def resolved_track(sid, refresh=False):
         song = await asyncio.to_thread(song_for, sid)
-        if song.raw_data.get('_melokeep_candidate'):
+        record = await asyncio.to_thread(get, 'track', sid, {})
+        candidate = bool(song.raw_data.get('_melokeep_candidate'))
+        preloaded = isinstance(song.downloaded_contents, (bytes, bytearray)) and bool(song.downloaded_contents)
+        if candidate or not preloaded and (refresh or record.get('resolved_until', 0) <= time.time()):
             cfg = copy.deepcopy(old.manager.config)
             if song.source not in cfg['music_sources']:
                 raise HTTPException(409, '该音源已停用，请重新搜索')
-            cfg['_melokeep_resolve'] = song.raw_data['search']
+            row = song.raw_data.get('search')
+            native_resolve = bool(row) and song.source in {'QQMusicClient', 'NeteaseMusicClient'}
+            if native_resolve:
+                cfg['_melokeep_resolve'] = row
+            cfg['_melokeep_candidates'] = False
+            cfg['_melokeep_refresh'] = True
             try:
-                songs = await coordinator.run(cfg, song.source, str(song.identifier),
-                                              refresh=bool(song.raw_data.get('_melokeep_refresh')))
+                songs = await coordinator.run(cfg, song.source,
+                                              str(song.identifier) if native_resolve else f'{song.song_name} {song.singers}',
+                                              refresh=True)
             except TimeoutError:
                 raise HTTPException(504, '排队或音频解析超时，请稍后重试或更换音源') from None
             except RuntimeError:
                 raise HTTPException(502, '音源解析失败，请查看运行日志或更换音源') from None
             if not songs:
                 raise HTTPException(422, '该曲目暂未解析到可用音频，请重试或更换音源')
-            song = songs[0]
+            matched = next((item for item in songs if str(item.identifier) == str(song.identifier)), None)
+            if matched is None:
+                raise HTTPException(422, '未找到同一原曲目，请重试或更换音源')
+            song = copy.deepcopy(matched)
+            if row:
+                song.raw_data.setdefault('search', copy.deepcopy(row))
+            result = await asyncio.to_thread(remember, song, sid)
+            now = time.time()
+            await asyncio.to_thread(put, 'track', sid, {'track': result, 'resolved_at': now, 'resolved_until': now + 60})
+            return result
         return await asyncio.to_thread(remember, song, sid)
 
     @router.post('/api/tracks/{sid}/playback')
     async def playback(sid: str):
         try:
             record = await asyncio.to_thread(get, 'track', sid)
-            result = ((await asyncio.to_thread(library_file, record['local_path']))['track'] if record and record.get('local_path')
-                      else record['track'] if record and record.get('navidrome_id') else await resolved_track(sid))
+            downloaded = await asyncio.to_thread(downloaded_file, sid, record)
+            if downloaded:
+                local = (await asyncio.to_thread(library_file, downloaded))['track']
+                result = {**record['track'], 'playback': local['playback'], 'size_bytes': local['size_bytes'],
+                          'duration': local['duration'] or record['track']['duration'],
+                          'cover': local['cover'] or record['track'].get('cover')}
+            else:
+                result = ((await asyncio.to_thread(library_file, record['local_path']))['track'] if record and record.get('local_path')
+                          else record['track'] if record and record.get('navidrome_id') else await resolved_track(sid))
             old.pushlog('info', f'准备试听：{result["title"]} · {result["source"]} · {result["playback"]["codec"]} · 状态 {result["playback"]["state"]}', category='playback', task_id=sid)
             return result
         except Exception:
@@ -690,9 +754,11 @@ def install(old, root):
         if record and record.get('navidrome_id'):
             return {'text': await asyncio.to_thread(library.navidrome.lyrics, record['navidrome_id'],
                                                    artist=record['track']['artist'], title=record['track']['title'])}
-        if record and record.get('local_path'):
+        local_path = record.get('local_path') if record else None
+        local_path = local_path or await asyncio.to_thread(downloaded_file, sid, record)
+        if local_path:
             try:
-                return {'text': await asyncio.to_thread(local_library.read_lyrics, resolve_library_file(record['local_path']))}
+                return {'text': await asyncio.to_thread(local_library.read_lyrics, resolve_library_file(local_path))}
             except (OSError, ValueError, local_library.mutagen.MutagenError):
                 return {'text': ''}
         await resolved_track(sid)
@@ -704,9 +770,23 @@ def install(old, root):
         return [remember(song) for song in song_for(sid).episodes or []]
 
     @router.get('/api/stream/{sid}')
-    def stream(sid: str, request: Request):
+    async def stream(sid: str, request: Request):
         try:
-            return old.stream_song(sid, request, song=song_for(sid))
+            record = await asyncio.to_thread(get, 'track', sid)
+            downloaded = await asyncio.to_thread(downloaded_file, sid, record)
+            if downloaded:
+                return local_audio(downloaded)
+            await resolved_track(sid)
+            try:
+                song = await asyncio.to_thread(song_for, sid)
+                return await asyncio.to_thread(old.stream_song, sid, request, song=song)
+            except HTTPException as error:
+                if error.status_code != 502:
+                    raise
+                # Signed URLs can expire earlier than the short resolution cache.
+                await resolved_track(sid, refresh=True)
+                song = await asyncio.to_thread(song_for, sid)
+                return await asyncio.to_thread(old.stream_song, sid, request, song=song)
         except Exception:
             old.pushlog('error', f'试听音频请求失败\n{traceback.format_exc()}', category='playback', task_id=sid)
             raise
@@ -975,6 +1055,8 @@ def install(old, root):
                         raise ValueError('下载器没有保存音频文件')
                     job.update(status='complete', bytes=audio.stat().st_size, total_bytes=audio.stat().st_size,
                                file=file_token(audio), detail=outcome['detail'])
+                    put('downloaded', job['track']['id'], job['file'])
+                    put('downloaded', download_key(job['track']), job['file'])
                     if outcome.get('download_source'):
                         actual = copy.copy(song)
                         actual.ext, actual.bitrate = outcome.get('codec'), outcome.get('bitrate')
