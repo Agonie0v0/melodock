@@ -45,16 +45,20 @@ const advancedFields = [
 ] as const;
 type AdvancedKey = (typeof advancedFields)[number][0];
 const switches = [
-  ["enable_search_curl_cffi", "搜索使用浏览器指纹", "搜索请求使用 curl_cffi。"],
+  [
+    "enable_search_curl_cffi",
+    "搜索使用浏览器指纹",
+    "模拟浏览器连接，提高部分音源的兼容性。",
+  ],
   [
     "enable_parse_curl_cffi",
     "解析使用浏览器指纹",
-    "播放和下载链接解析使用 curl_cffi。",
+    "解析音频地址时模拟浏览器连接。",
   ],
   [
     "enable_download_curl_cffi",
     "下载使用浏览器指纹",
-    "下载文件请求使用 curl_cffi。",
+    "下载音频时模拟浏览器连接。",
   ],
   ["random_update_ua", "随机更新 User-Agent", "请求时更新浏览器标识。"],
   [
@@ -210,6 +214,7 @@ export function EngineSettings({
   return (
     <form
       className="settings-form"
+      onChange={() => setMessage("")}
       onSubmit={async (event) => {
         event.preventDefault();
         setError("");
@@ -255,6 +260,23 @@ export function EngineSettings({
         }
       }}
     >
+      <div className="settings-save">
+        <button
+          className="primary"
+          disabled={busy || !config.music_sources.length}
+        >
+          <Check />
+          {busy ? "正在保存…" : "保存设置"}
+        </button>
+        {!message && !error && (
+          <span className="setting-help">更改后请保存</span>
+        )}
+        {error && <p role="alert">{error}</p>}
+        {message && <p role="status">{message}</p>}
+        {!config.music_sources.length && (
+          <p role="status">请选择至少一个音源后保存。</p>
+        )}
+      </div>
       <section className="settings-section settings-basics">
         <h2>基础设置</h2>
         <p>直接使用原引擎的完整配置。保存后重新初始化音源客户端。</p>
@@ -457,40 +479,6 @@ export function EngineSettings({
           </SourceDisclosure>
         )}
       </section>
-      <section className="settings-section settings-behavior">
-        <h2>引擎行为</h2>
-        <div className="engine-switches">
-          <label className="check-label">
-            <input
-              type="checkbox"
-              aria-describedby="lazy-search-description"
-              checked={Boolean(config.lazy_search)}
-              onChange={(e) =>
-                setConfig({ ...config, lazy_search: e.target.checked })
-              }
-            />
-            <span>
-              按需解析音源（QQ / 网易云）
-              <small id="lazy-search-description">
-                开启后先显示歌曲，播放或下载时再解析，格式和大小可能暂不可见。关闭时搜索即解析并显示可用信息。保存后对新搜索生效。
-              </small>
-            </span>
-          </label>
-          {switches.map(([key, label, description]) => (
-            <label className="check-label" key={key}>
-              <input
-                type="checkbox"
-                checked={Boolean(config.global_client_cfg[key])}
-                onChange={(e) => updateGlobal(key, e.target.checked)}
-              />
-              <span>
-                {label}
-                <small>{description}</small>
-              </span>
-            </label>
-          ))}
-        </div>
-      </section>
       <section className="settings-section settings-sources">
         <h2>全部音源与账号设置</h2>
         <p>
@@ -653,6 +641,49 @@ export function EngineSettings({
           </div>
         </SourceDisclosure>
       </section>
+      <section className="settings-section settings-behavior">
+        <h2>引擎行为</h2>
+        <div className="engine-switches">
+          <label className="check-label">
+            <input
+              type="checkbox"
+              aria-describedby="lazy-search-description"
+              checked={Boolean(config.lazy_search)}
+              onChange={(e) =>
+                setConfig({ ...config, lazy_search: e.target.checked })
+              }
+            />
+            <span>
+              按需解析音源（QQ / 网易云）
+              <small id="lazy-search-description">
+                开启后先显示歌曲，播放或下载时再解析，格式和大小可能暂不可见。关闭时搜索即解析并显示可用信息。保存后对新搜索生效。
+              </small>
+            </span>
+          </label>
+          <details className="connection-options">
+            <summary>连接兼容选项（高级）</summary>
+            <p className="setting-help">
+              音源连接正常时通常无需修改。仅在搜索、解析或下载失败时调整。
+            </p>
+            <div className="engine-switches">
+              {switches.map(([key, label, description]) => (
+                <label className="check-label" key={key}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config.global_client_cfg[key])}
+                    onChange={(e) => updateGlobal(key, e.target.checked)}
+                  />
+                  <span>
+                    {label}
+                    <small>{description}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </details>
+        </div>
+      </section>
+
       <details
         className="settings-section settings-advanced"
         open={advancedOpen}
@@ -694,20 +725,6 @@ export function EngineSettings({
           </label>
         </div>
       </details>
-      <div className="settings-save">
-        <button
-          className="primary"
-          disabled={busy || !config.music_sources.length}
-        >
-          <Check />
-          {busy ? "正在保存…" : "保存设置"}
-        </button>
-        {error && <p role="alert">{error}</p>}
-        {message && <p role="status">{message}</p>}
-        {!config.music_sources.length && (
-          <p role="status">请选择至少一个音源后保存。</p>
-        )}
-      </div>
     </form>
   );
 }

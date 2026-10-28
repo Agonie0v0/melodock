@@ -809,19 +809,21 @@
   box-shadow: var(--shadow-pill);
 }
 .global-mini-player {
-  position: sticky;
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: max(16px, env(safe-area-inset-bottom));
   z-index: 20;
-  width: min(100%, 1000px);
-  margin: 16px auto 0;
+  width: min(calc(100% - 32px), 1000px);
+  margin: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) auto;
   align-items: center;
   gap: 16px;
   padding: 10px 16px;
-  background: color-mix(in srgb, var(--surface) 76%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: var(--shadow);
@@ -874,8 +876,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 9px;
   cursor: pointer;
   list-style: none;
@@ -911,8 +913,8 @@
   margin: 0;
 }
 .global-mini-actions .pause {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
 }
 @media (max-width: 900px) {
   .global-mini-player {
@@ -965,7 +967,7 @@
     min-width: 0;
   }
   .global-mini-volume-panel {
-    right: -76px;
+    right: -92px;
   }
 }
 @media (max-width: 600px) {
@@ -1005,5 +1007,234 @@
   .nav-album-row span,
   .nav-album-row small {
     grid-column: 2;
+  }
+}
+
+/* Shared song actions and secondary controls. */
+.song-actions .icon-button,
+.file-actions .icon-button {
+  flex: none;
+  gap: 5px;
+}
+.library-actions.song-actions > .icon-button .action-label {
+  display: none;
+}
+.song-action-menu {
+  position: fixed;
+  inset: auto 16px 150px auto;
+  margin: 0;
+  padding: 6px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.song-action-menu:popover-open {
+  display: grid;
+  gap: 2px;
+}
+.song-action-menu .icon-button {
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  height: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.song-action-menu svg {
+  width: 17px;
+  height: 17px;
+}
+@position-try --song-menu-in-viewport {
+  right: 16px;
+}
+@supports (top: anchor(bottom)) {
+  .song-action-menu {
+    inset: auto;
+    top: anchor(bottom);
+    right: anchor(right);
+    margin-top: 6px;
+    position-try-fallbacks:
+      --song-menu-in-viewport,
+      flip-block,
+      --song-menu-in-viewport flip-block;
+  }
+}
+.library-batch-actions summary,
+.playlist-manage summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.library-batch-actions[open] {
+  flex-basis: 100%;
+}
+.library-batch-options,
+.playlist-manage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+}
+.library-batch-options svg {
+  width: 17px;
+  height: 17px;
+}
+.playlist-manage {
+  position: relative;
+}
+.playlist-manage-actions {
+  position: absolute;
+  right: 0;
+  z-index: 5;
+  min-width: 150px;
+  margin-top: 6px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.playlist-manage-actions button {
+  width: 100%;
+  justify-content: flex-start;
+}
+.danger-text {
+  color: var(--danger);
+}
+.playlist-detail .playlist-heading {
+  padding: 0 0 24px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  box-shadow: none;
+  grid-template-columns: clamp(120px, 12vw, 180px) minmax(0, 1fr);
+}
+.playlist-detail .playlist-issues {
+  padding: 0 0 16px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  box-shadow: none;
+}
+.playlist-issues summary {
+  min-height: 44px;
+  align-content: center;
+}
+.processing-workflow {
+  display: grid;
+  gap: 24px;
+}
+.processing-workflow .music-table-wrap {
+  max-height: min(52vh, 560px);
+  overflow: auto;
+}
+.processing-workflow .library-workbench {
+  margin: 0;
+}
+.workbench-rule-summary {
+  padding: 0 14px;
+}
+.workbench-rule-summary > summary {
+  min-height: 44px;
+  align-content: center;
+  cursor: pointer;
+  color: var(--ink);
+}
+.workbench-rule-summary[open] {
+  padding-bottom: 12px;
+}
+.workbench-rule-summary p {
+  margin: 8px 0;
+}
+.workspace:has(.global-mini-player) {
+  padding-bottom: calc(132px + env(safe-area-inset-bottom));
+}
+.global-mini-actions .icon-button {
+  width: 44px;
+  height: 44px;
+}
+.global-mini-volume-panel .player-extras {
+  gap: 8px;
+}
+@media (max-width: 600px) {
+  .global-mini-player {
+    width: calc(100% - 20px);
+    gap: 6px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+  }
+  .workspace:has(.global-mini-player) {
+    padding-bottom: calc(156px + env(safe-area-inset-bottom));
+  }
+  .playlist-detail .playlist-heading {
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .library-actions.song-actions {
+    justify-content: flex-start;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .library-actions.song-actions > .icon-button,
+  .file-actions .icon-button {
+    width: auto;
+    min-width: 44px;
+    min-height: 44px;
+    height: auto;
+    padding: 8px;
+    font-size: 12px;
+  }
+  .library-actions.song-actions > .icon-button .action-label {
+    display: inline;
+  }
+  .library-actions.song-actions > .icon-button svg {
+    width: 16px;
+    height: 16px;
+  }
+  .nav-song-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .nav-song-card {
+    padding: 12px;
+  }
+  .library-batch-options > select {
+    max-width: 100%;
+    min-height: 44px;
+  }
+  .tag-diff,
+  .tag-diff tbody,
+  .tag-diff tr {
+    display: block;
+    width: 100%;
+  }
+  .tag-diff thead {
+    display: none;
+  }
+  .tag-diff tr {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .tag-diff tbody :is(th, td) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    border: 0;
+    padding: 6px 0;
+  }
+  .tag-diff td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
   }
 }

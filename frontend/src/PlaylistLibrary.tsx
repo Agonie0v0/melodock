@@ -225,29 +225,32 @@ export function PlaylistLibrary({
             )}
             {!current.read_only &&
               (!remote || current.can_manage !== false) && (
-                <>
-                  <button
-                    className="secondary"
-                    onClick={() => {
-                      setName(current.name);
-                      setError("");
-                      setEditing(true);
-                    }}
-                  >
-                    <Pencil />
-                    重命名
-                  </button>
-                  <button
-                    className="secondary"
-                    onClick={() => {
-                      setError("");
-                      setRemoving(true);
-                    }}
-                  >
-                    <Trash2 />
-                    删除歌单
-                  </button>
-                </>
+                <details className="playlist-manage">
+                  <summary className="secondary">管理歌单</summary>
+                  <div className="playlist-manage-actions">
+                    <button
+                      className="secondary"
+                      onClick={() => {
+                        setName(current.name);
+                        setError("");
+                        setEditing(true);
+                      }}
+                    >
+                      <Pencil />
+                      重命名
+                    </button>
+                    <button
+                      className="secondary danger-text"
+                      onClick={() => {
+                        setError("");
+                        setRemoving(true);
+                      }}
+                    >
+                      <Trash2 />
+                      删除歌单
+                    </button>
+                  </div>
+                </details>
               )}
           </div>
         </div>
@@ -271,7 +274,7 @@ export function PlaylistLibrary({
         </div>
       )}
       {!!current.issues.length && (
-        <details className="playlist-issues" open>
+        <details className="playlist-issues" key={current.id}>
           <summary>
             {current.issues.length} 首曲目未导入 · 查看原因与换源搜索
           </summary>
@@ -308,7 +311,10 @@ export function PlaylistLibrary({
       )}
       {children}
       {editing && (
-        <Modal title="重命名歌单" close={() => !busy && setEditing(false)}>
+        <Modal
+          title="重命名歌单"
+          close={busy ? undefined : () => setEditing(false)}
+        >
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -343,7 +349,10 @@ export function PlaylistLibrary({
         </Modal>
       )}
       {removing && (
-        <Modal title="删除歌单" close={() => !busy && setRemoving(false)}>
+        <Modal
+          title="删除歌单"
+          close={busy ? undefined : () => setRemoving(false)}
+        >
           <p>
             删除{remote ? " Navidrome 上的" : ""}「{current.name}」？
             {remote

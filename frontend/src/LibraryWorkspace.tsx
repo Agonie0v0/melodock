@@ -167,7 +167,13 @@ export function LibraryWorkspace({
           <MusicLibrary {...props} busy={props.busy || busy} />
         )}
         {tab === "workbench" && (
-          <>
+          <div className="processing-workflow">
+            <MusicLibrary
+              {...props}
+              busy={props.busy || busy}
+              manage={manage}
+              processing
+            />
             <LibraryWorkbench
               count={
                 props.files.filter(
@@ -186,13 +192,7 @@ export function LibraryWorkspace({
                 )
               }
             />
-            <MusicLibrary
-              {...props}
-              busy={props.busy || busy}
-              manage={manage}
-              processing
-            />
-          </>
+          </div>
         )}
         {tab === "jobs" && (
           <LibraryJobs focus={focus} changed={props.refresh} />

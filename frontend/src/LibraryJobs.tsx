@@ -500,8 +500,10 @@ export function LibraryJobs({
                               {changes.map(([key, value]) => (
                                 <tr key={key}>
                                   <th>{tagLabels[key] || key}</th>
-                                  <td>{item.before[key] || "空"}</td>
-                                  <td>{value || "清空"}</td>
+                                  <td data-label="修改前">
+                                    {item.before[key] || "空"}
+                                  </td>
+                                  <td data-label="修改后">{value || "清空"}</td>
                                 </tr>
                               ))}
                             </tbody>

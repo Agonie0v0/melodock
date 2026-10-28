@@ -71,7 +71,7 @@ export function LibraryWorkbench({
                   setDirectoryMode(e.target.value === "directory")
                 }
               >
-                <option value="selection">下方选中的歌曲</option>
+                <option value="selection">已选中的歌曲</option>
                 <option value="directory">目录内全部歌曲（含子目录）</option>
               </select>
             </label>
@@ -101,7 +101,8 @@ export function LibraryWorkbench({
               </select>
             </label>
           </div>
-          <div className="workbench-rule-summary" aria-label="当前处理规则">
+          <details className="workbench-rule-summary" aria-label="当前处理规则">
+            <summary>查看当前处理规则</summary>
             <p>使用已保存的默认规则</p>
             {action !== "organize" && (
               <p>
@@ -137,7 +138,7 @@ export function LibraryWorkbench({
                 </small>
               </p>
             )}
-          </div>
+          </details>
           <div className="management-toolbar workbench-submit">
             <span aria-live="polite">
               {directoryMode
@@ -161,7 +162,7 @@ export function LibraryWorkbench({
               {busy ? "正在创建预览…" : "生成修改预览"}
             </button>
             {!count && !directoryMode && (
-              <small>先在下方选择需要处理的歌曲</small>
+              <small>先在歌曲列表中选择需要处理的歌曲</small>
             )}
             {action !== "organize" && !config.sources.length && (
               <small role="status">请选择至少一个刮削来源</small>

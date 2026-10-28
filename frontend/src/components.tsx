@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
-import { Music2, X } from "lucide-react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
+import { Music2, X, Play, Plus, ListMusic, MoreHorizontal } from "lucide-react";
 import { activeLine, clock, type LyricLine } from "./lyrics";
 import type { Track } from "./types";
 export function Cover({
@@ -63,25 +63,94 @@ export function Button({
   label,
   children,
   onClick,
-  active = false,
+  active,
   disabled = false,
+  text,
 }: {
   label: string;
   children: ReactNode;
   onClick: () => void;
   active?: boolean;
   disabled?: boolean;
+  text?: string;
 }) {
   return (
     <button
       className={`icon-button ${active ? "active" : ""}`}
       aria-label={label}
+      aria-pressed={active}
       title={label}
       onClick={onClick}
       disabled={disabled}
     >
       {children}
+      {text && <span className="action-label">{text}</span>}
     </button>
+  );
+}
+export function SongActions({
+  track,
+  play,
+  queue,
+  savePlaylist,
+  children,
+}: {
+  track: Track;
+  play: () => void;
+  queue: () => void;
+  savePlaylist?: () => void;
+  children?: ReactNode;
+}) {
+  const id = useId();
+  const anchor = `--song-${id.replace(/[^a-zA-Z0-9]/g, "")}`;
+  return (
+    <div className="library-actions song-actions">
+      <Button label={`播放 ${track.title}`} text="播放" onClick={play}>
+        <Play />
+      </Button>
+      <Button label={`加入待播 ${track.title}`} text="加入待播" onClick={queue}>
+        <Plus />
+      </Button>
+      {savePlaylist && (
+        <Button
+          label={`加入歌单 ${track.title}`}
+          text="加入歌单"
+          onClick={savePlaylist}
+        >
+          <ListMusic />
+        </Button>
+      )}
+      {children && (
+        <>
+          <button
+            type="button"
+            className="icon-button song-more-trigger"
+            aria-label={`更多歌曲操作 ${track.title}`}
+            popoverTarget={id}
+            style={{ anchorName: anchor } as React.CSSProperties}
+          >
+            <MoreHorizontal />
+            <span className="action-label">更多</span>
+          </button>
+          <div
+            id={id}
+            popover="auto"
+            className="song-action-menu"
+            style={{ positionAnchor: anchor } as React.CSSProperties}
+            onClick={(event) => {
+              if (
+                (event.target as HTMLElement).closest(
+                  "button:not(:disabled), a",
+                )
+              )
+                event.currentTarget.hidePopover();
+            }}
+          >
+            {children}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 export function Lyrics({
@@ -178,8 +247,8 @@ export function Modal({
       ref={ref}
       className={className}
       onCancel={(e) => {
-        if (close) close();
-        else e.preventDefault();
+        e.preventDefault();
+        close?.();
       }}
       aria-label={title}
     >

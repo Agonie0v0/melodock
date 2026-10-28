@@ -38,6 +38,7 @@ import {
   CircleAlert,
 } from "lucide-react";
 import { api } from "./api";
+import { playbackErrorMessage } from "./playback-errors";
 import { selectResults } from "./results";
 import { parseLrc, clock, type LyricLine } from "./lyrics";
 import type {
@@ -531,6 +532,8 @@ export function App() {
       await element.play();
     } catch (error) {
       if (generation === playGeneration.current) {
+        const message = playbackErrorMessage(error);
+        if (!message) return;
         reportPlayback(
           track,
           "failed",
@@ -539,7 +542,7 @@ export function App() {
             ? `${error.name}: ${error.message}`
             : String(error),
         );
-        fail(error);
+        setNotice(message);
       }
     } finally {
       if (generation === playGeneration.current) setLoadingPlay(false);
@@ -562,13 +565,15 @@ export function App() {
         return;
       }
       await audio.current.play().catch((error) => {
+        const message = playbackErrorMessage(error);
+        if (!message) return;
         reportPlayback(
           current,
           "failed",
           "play",
           `${error.name}: ${error.message}`,
         );
-        fail(error);
+        setNotice(message);
       });
     } else audio.current?.pause();
   }
@@ -1106,6 +1111,7 @@ export function App() {
     <div className="player-extras">
       <Button
         label={volume ? "静音" : "取消静音"}
+        active={volume === 0}
         onClick={() => setVolume((v) => (v ? 0 : 0.65))}
       >
         {volume ? <Volume2 /> : <VolumeX />}
@@ -1779,6 +1785,7 @@ export function App() {
                       <div className="sources">
                         <button
                           className={`source ${sourceFilter === "all" ? "active" : ""}`}
+                          aria-pressed={sourceFilter === "all"}
                           onClick={() => setSourceFilter("all")}
                         >
                           全部音源<span>{tracks.length}</span>
@@ -1789,6 +1796,7 @@ export function App() {
                             <button
                               key={s.id}
                               className={`source ${sourceFilter === s.id ? "active" : ""}`}
+                              aria-pressed={sourceFilter === s.id}
                               onClick={() => setSourceFilter(s.id)}
                             >
                               <i />
@@ -1852,6 +1860,7 @@ export function App() {
                       type="button"
                       className={`now-action-btn ${current && favIds.has(current.id) ? "active" : ""}`}
                       aria-label="收藏当前曲目"
+                      aria-pressed={!!current && favIds.has(current.id)}
                       title="收藏当前曲目"
                       disabled={!current}
                       onClick={() => current && void favorite(current)}

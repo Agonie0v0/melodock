@@ -10,11 +10,10 @@ import {
   Music2,
   LayoutGrid,
   List,
-  ListMusic,
   Trash2,
 } from "lucide-react";
 import { api } from "./api";
-import { Cover, Button, Modal, SongTitle } from "./components";
+import { Cover, Button, Modal, SongTitle, SongActions } from "./components";
 import { clock } from "./lyrics";
 import type { Track } from "./types";
 
@@ -538,37 +537,25 @@ export function NavidromeLibrary({
                   <small>
                     {track.album || "未知专辑"} · {clock(track.duration)}
                   </small>
-                  <div className="library-actions">
-                    <Button
-                      label={`播放 ${track.title}`}
-                      onClick={() => play(track)}
-                    >
-                      <Play />
-                    </Button>
-                    <Button
-                      label={`加入待播 ${track.title}`}
-                      onClick={() => queue([track])}
-                    >
-                      <Plus />
-                    </Button>
-                    {savePlaylist && (
-                      <Button
-                        label={`加入歌单 ${track.title}`}
-                        onClick={() => savePlaylist([track])}
-                      >
-                        <ListMusic />
-                      </Button>
-                    )}
+                  <SongActions
+                    track={track}
+                    play={() => play(track)}
+                    queue={() => queue([track])}
+                    savePlaylist={
+                      savePlaylist ? () => savePlaylist([track]) : undefined
+                    }
+                  >
                     {canDelete && (
                       <Button
                         label={`删除原文件 ${track.title}`}
+                        text="删除原文件"
                         disabled={deleting}
                         onClick={() => void previewDeletion(track)}
                       >
                         <Trash2 />
                       </Button>
                     )}
-                  </div>
+                  </SongActions>
                 </article>
               ))}
             </div>
@@ -588,7 +575,7 @@ export function NavidromeLibrary({
                 <tbody>
                   {shownTracks.map((track) => (
                     <tr key={track.id}>
-                      <td>
+                      <td className="library-song-cell">
                         <div className="library-song">
                           <Cover track={track} onPlay={() => play(track)} />
                           <span>
@@ -606,39 +593,31 @@ export function NavidromeLibrary({
                       </td>
                       <td className="library-artist">{track.artist}</td>
                       <td className="library-album">{track.album}</td>
-                      <td>{clock(track.duration)}</td>
-                      <td>
-                        <div className="library-actions">
-                          <Button
-                            label={`播放 ${track.title}`}
-                            onClick={() => play(track)}
-                          >
-                            <Play />
-                          </Button>
-                          <Button
-                            label={`加入待播 ${track.title}`}
-                            onClick={() => queue([track])}
-                          >
-                            <Plus />
-                          </Button>
-                          {savePlaylist && (
-                            <Button
-                              label={`加入歌单 ${track.title}`}
-                              onClick={() => savePlaylist([track])}
-                            >
-                              <ListMusic />
-                            </Button>
-                          )}
+                      <td className="library-duration">
+                        {clock(track.duration)}
+                      </td>
+                      <td className="library-action-cell">
+                        <SongActions
+                          track={track}
+                          play={() => play(track)}
+                          queue={() => queue([track])}
+                          savePlaylist={
+                            savePlaylist
+                              ? () => savePlaylist([track])
+                              : undefined
+                          }
+                        >
                           {canDelete && (
                             <Button
                               label={`删除原文件 ${track.title}`}
+                              text="删除原文件"
                               disabled={deleting}
                               onClick={() => void previewDeletion(track)}
                             >
                               <Trash2 />
                             </Button>
                           )}
-                        </div>
+                        </SongActions>
                       </td>
                     </tr>
                   ))}

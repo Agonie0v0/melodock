@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
   Folder,
   Play,
-  Plus,
   Pencil,
   Trash2,
   Download,
@@ -10,7 +9,7 @@ import {
   WandSparkles,
   ListMusic,
 } from "lucide-react";
-import { Button, Cover, Modal, SongTitle } from "./components";
+import { Button, Cover, Modal, SongTitle, SongActions } from "./components";
 import { api } from "./api";
 import { clock } from "./lyrics";
 import type { LibraryFile, Track } from "./types";
@@ -133,6 +132,7 @@ export function MusicLibrary({
         <aside className="library-folders" aria-label="音乐文件夹">
           <button
             className={folder === "all" ? "active" : ""}
+            aria-pressed={folder === "all"}
             onClick={() => selectFolder("all")}
           >
             <Music2 />
@@ -142,6 +142,7 @@ export function MusicLibrary({
             <button
               key={key}
               className={folder === key ? "active" : ""}
+              aria-pressed={folder === key}
               onClick={() => selectFolder(key)}
               title={value.root + "/" + value.name}
             >
@@ -155,6 +156,7 @@ export function MusicLibrary({
             <div className="library-modes">
               <button
                 className={mode === "songs" ? "active" : ""}
+                aria-pressed={mode === "songs"}
                 onClick={() => {
                   setMode("songs");
                   setSelected([]);
@@ -164,6 +166,7 @@ export function MusicLibrary({
               </button>
               <button
                 className={mode === "files" ? "active" : ""}
+                aria-pressed={mode === "files"}
                 onClick={() => {
                   setMode("files");
                   setSelected([]);
@@ -236,84 +239,99 @@ export function MusicLibrary({
                     {selectedTracks.length ? "播放选中" : "播放全部"}
                   </button>
                 )}
-                {!processing && (
-                  <button
-                    className="secondary"
-                    disabled={!selectedTracks.length || busy}
-                    onClick={() => queue(selectedTracks)}
-                  >
-                    加入待播
-                  </button>
-                )}
-                {!processing && savePlaylist && (
-                  <button
-                    className="secondary"
-                    disabled={!selectedTracks.length || busy}
-                    onClick={() => savePlaylist(selectedTracks)}
-                  >
-                    <ListMusic />
-                    加入歌单
-                  </button>
-                )}
-                {!processing && process && (
-                  <button
-                    className="secondary"
-                    disabled={!selectedTracks.length || busy}
-                    onClick={() => process(chosen)}
-                  >
-                    <WandSparkles />
-                    送往刮削整理
-                  </button>
-                )}
-                {manage && (
-                  <>
-                    <select
-                      className="library-tool-select"
-                      aria-label="更多音乐管理操作"
-                      value=""
-                      disabled={!chosen.some((file) => file.track) || busy}
-                      onChange={(e) => {
-                        if (e.target.value)
-                          manage(e.target.value as LibraryAction, chosen);
-                      }}
-                    >
-                      <option value="">更多管理操作</option>
-                      <option value="scrape">只刮削标签</option>
-                      <option value="edit">编辑标签、歌词与封面</option>
-                      <option value="extract">从文件名提取标签</option>
-                      <option value="clean">清理与替换标签文本</option>
-                      <option value="rename">按标签批量重命名</option>
-                      <option value="export_lyrics">导出内嵌歌词到 LRC</option>
-                      <option value="import_lyrics">嵌入同名 LRC 歌词</option>
-                      <option value="export_cover">导出内嵌专辑封面</option>
-                      <option value="import_cover">嵌入同名或目录封面</option>
-                      <option value="artist_artwork">刮削艺术家图片</option>
-                      <option value="duplicates">检查重复歌曲</option>
-                      <option value="quality">检查音频完整性与参数</option>
-                      <option value="convert">转换音频格式</option>
-                      <option value="split">CUE 分轨</option>
-                      <option value="clear">清空内嵌标签</option>
-                    </select>
-                  </>
-                )}
               </>
             )}
-            <button
-              className="secondary"
-              disabled={busy || !chosen.length}
-              onClick={() => remove(chosen)}
-            >
-              删除选中文件
-            </button>
-            {chosen.length === 1 && (
-              <a
-                className="secondary"
-                href={`/api/files/content?path=${encodeURIComponent(chosen[0].path)}`}
-                download
-              >
-                下载到本机
-              </a>
-            )}
+            <details className="library-batch-actions">
+              <summary className="secondary">更多操作</summary>
+              <div className="library-batch-options">
+                {mode === "songs" && (
+                  <>
+                    {!processing && (
+                      <button
+                        className="secondary"
+                        disabled={!selectedTracks.length || busy}
+                        onClick={() => queue(selectedTracks)}
+                      >
+                        加入待播
+                      </button>
+                    )}
+                    {!processing && savePlaylist && (
+                      <button
+                        className="secondary"
+                        disabled={!selectedTracks.length || busy}
+                        onClick={() => savePlaylist(selectedTracks)}
+                      >
+                        <ListMusic />
+                        加入歌单
+                      </button>
+                    )}
+                    {!processing && process && (
+                      <button
+                        className="secondary"
+                        disabled={!selectedTracks.length || busy}
+                        onClick={() => process(chosen)}
+                      >
+                        <WandSparkles />
+                        送往刮削整理
+                      </button>
+                    )}
+                    {manage && (
+                      <>
+                        <select
+                          className="library-tool-select"
+                          aria-label="更多音乐管理操作"
+                          value=""
+                          disabled={!chosen.some((file) => file.track) || busy}
+                          onChange={(e) => {
+                            if (e.target.value)
+                              manage(e.target.value as LibraryAction, chosen);
+                          }}
+                        >
+                          <option value="">更多管理操作</option>
+                          <option value="scrape">只刮削标签</option>
+                          <option value="edit">编辑标签、歌词与封面</option>
+                          <option value="extract">从文件名提取标签</option>
+                          <option value="clean">清理与替换标签文本</option>
+                          <option value="rename">按标签批量重命名</option>
+                          <option value="export_lyrics">
+                            导出内嵌歌词到 LRC
+                          </option>
+                          <option value="import_lyrics">
+                            嵌入同名 LRC 歌词
+                          </option>
+                          <option value="export_cover">导出内嵌专辑封面</option>
+                          <option value="import_cover">
+                            嵌入同名或目录封面
+                          </option>
+                          <option value="artist_artwork">刮削艺术家图片</option>
+                          <option value="duplicates">检查重复歌曲</option>
+                          <option value="quality">检查音频完整性与参数</option>
+                          <option value="convert">转换音频格式</option>
+                          <option value="split">CUE 分轨</option>
+                          <option value="clear">清空内嵌标签</option>
+                        </select>
+                      </>
+                    )}
+                  </>
+                )}
+                <button
+                  className="secondary"
+                  disabled={busy || !chosen.length}
+                  onClick={() => remove(chosen)}
+                >
+                  删除选中文件
+                </button>
+                {chosen.length === 1 && (
+                  <a
+                    className="secondary"
+                    href={`/api/files/content?path=${encodeURIComponent(chosen[0].path)}`}
+                    download
+                  >
+                    下载到本机
+                  </a>
+                )}
+              </div>
+            </details>
           </div>
           {error && <p role="alert">{error}</p>}
           <div className="music-table-wrap">
@@ -334,7 +352,7 @@ export function MusicLibrary({
                     key={file.path}
                     className={current?.id === file.track?.id ? "current" : ""}
                   >
-                    <td>
+                    <td className="library-selection">
                       <input
                         type="checkbox"
                         aria-label={`选择文件 ${file.name}`}
@@ -349,7 +367,7 @@ export function MusicLibrary({
                         }
                       />
                     </td>
-                    <td>
+                    <td className="library-song-cell">
                       <div className="library-song">
                         <Cover
                           track={file.track}
@@ -393,28 +411,26 @@ export function MusicLibrary({
                         : `${(file.size / 1024).toFixed(1)} KB`}
                       <small>{file.track?.playback.codec?.toUpperCase()}</small>
                     </td>
-                    <td>
-                      <div className="library-actions">
-                        {file.track && (
-                          <>
-                            <Button
-                              label={`播放本地歌曲 ${file.track.title}`}
-                              onClick={() => play(file.track!)}
-                            >
-                              <Play />
-                            </Button>
-                            <Button
-                              label={`加入待播 ${file.track.title}`}
-                              onClick={() => queue([file.track!])}
-                            >
-                              <Plus />
-                            </Button>
+                    <td className="library-action-cell">
+                      {file.track ? (
+                        <SongActions
+                          track={file.track}
+                          play={() => play(file.track!)}
+                          queue={() => queue([file.track!])}
+                          savePlaylist={
+                            savePlaylist
+                              ? () => savePlaylist([file.track!])
+                              : undefined
+                          }
+                        >
+                          {(processing || process) && (
                             <Button
                               label={
                                 processing
                                   ? `编辑歌曲 ${file.track.title}`
                                   : `整理歌曲 ${file.track.title}`
                               }
+                              text={processing ? "编辑歌曲" : "刮削整理"}
                               disabled={busy || (processing && !file.editable)}
                               onClick={() =>
                                 processing ? edit(file) : process?.([file])
@@ -422,25 +438,46 @@ export function MusicLibrary({
                             >
                               {processing ? <Pencil /> : <WandSparkles />}
                             </Button>
-                          </>
-                        )}
-                        <a
-                          className="icon-button library-download"
-                          title="下载到本机"
-                          aria-label={`下载到本机 ${file.name}`}
-                          href={`/api/files/content?path=${encodeURIComponent(file.path)}`}
-                          download
-                        >
-                          <Download />
-                        </a>
-                        <Button
-                          label={`删除文件 ${file.name}`}
-                          disabled={busy}
-                          onClick={() => remove([file])}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </div>
+                          )}
+                          <a
+                            className="icon-button library-download"
+                            aria-label={`下载到本机 ${file.name}`}
+                            href={`/api/files/content?path=${encodeURIComponent(file.path)}`}
+                            download
+                          >
+                            <Download />
+                            <span>下载到本机</span>
+                          </a>
+                          <Button
+                            label={`删除文件 ${file.name}`}
+                            text="删除文件"
+                            disabled={busy}
+                            onClick={() => remove([file])}
+                          >
+                            <Trash2 />
+                          </Button>
+                        </SongActions>
+                      ) : (
+                        <div className="library-actions file-actions">
+                          <a
+                            className="icon-button"
+                            aria-label={`下载到本机 ${file.name}`}
+                            href={`/api/files/content?path=${encodeURIComponent(file.path)}`}
+                            download
+                          >
+                            <Download />
+                            <span>下载</span>
+                          </a>
+                          <Button
+                            label={`删除文件 ${file.name}`}
+                            text="删除"
+                            disabled={busy}
+                            onClick={() => remove([file])}
+                          >
+                            <Trash2 />
+                          </Button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

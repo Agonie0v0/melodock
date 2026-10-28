@@ -33,6 +33,15 @@ try {
     }),
     errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  const expand = async (selector) => {
+    const disclosure = page.locator(selector);
+    if (!(await disclosure.evaluate((el) => el.hasAttribute("open"))))
+      await disclosure.locator(":scope > summary").click();
+  };
+  const songMenu = async (title) => {
+    await page.getByLabel(`更多歌曲操作 ${title}`, { exact: true }).click();
+  };
+
   await page.route("**/test-cover-missing.png", (route) =>
     route.fulfill({ status: 404, body: "" }),
   );
@@ -1186,26 +1195,46 @@ try {
         .getBoundingClientRect()
         .toJSON(),
     }));
-    assert.ok(
-      Math.abs(
-        transport.y + transport.height / 2 - volume.y - volume.height / 2,
-      ) < 2,
-      `volume and playback share a row at ${width}`,
-    );
-    assert.ok(
-      transport.x >= panel.x &&
-        volume.x + volume.width <= panel.x + panel.width &&
-        transport.x + transport.width <= volume.x,
-      `playback controls fit without overlap at ${width}`,
-    );
-    assert.ok(
-      volume.x - transport.x - transport.width <= 12.5 &&
+    if (panel.width <= 420) {
+      assert.ok(
+        volume.y >= transport.y + transport.height,
+        `volume is below playback at ${width}`,
+      );
+      for (const box of [transport, volume])
+        assert.ok(
+          box.x >= panel.x - 1 &&
+            box.x + box.width <= panel.x + panel.width + 1 &&
+            Math.abs(box.x + box.width / 2 - panel.x - panel.width / 2) < 1,
+          `stacked controls fit and remain centered at ${width}`,
+        );
+    } else {
+      assert.ok(
         Math.abs(
-          (transport.x + volume.x + volume.width) / 2 -
-            panel.x -
-            panel.width / 2,
-        ) < 1,
-      `playback and volume form a compact centered group at ${width}`,
+          transport.y + transport.height / 2 - volume.y - volume.height / 2,
+        ) < 2,
+      );
+      assert.ok(
+        transport.x >= panel.x &&
+          volume.x + volume.width <= panel.x + panel.width &&
+          transport.x + transport.width <= volume.x,
+      );
+      assert.ok(
+        volume.x - transport.x - transport.width <= 12.5 &&
+          Math.abs(
+            (transport.x + volume.x + volume.width) / 2 -
+              panel.x -
+              panel.width / 2,
+          ) < 1,
+      );
+    }
+    const targets = await controls
+      .locator("button")
+      .evaluateAll((buttons) =>
+        buttons.map((b) => b.getBoundingClientRect().toJSON()),
+      );
+    assert.ok(
+      targets.every((b) => b.width >= 44 && b.height >= 44),
+      `playback touch targets at ${width}`,
     );
     if (width === 680)
       await controls.screenshot({
@@ -1237,6 +1266,9 @@ try {
     "player actions form one row of equal-width buttons",
   );
   await page.getByLabel("切换随机播放", { exact: true }).click();
+  await expect(
+    page.getByLabel("切换随机播放", { exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   assert.ok(
     await page
       .getByLabel("切换随机播放", { exact: true })
@@ -1428,7 +1460,7 @@ try {
   await expect(page.locator(".music-table tbody tr")).toHaveCount(1);
   await expect(page.getByText("本地测试音乐", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "通勤", exact: true }).click();
-  await page.getByLabel("播放本地歌曲 本地测试音乐", { exact: true }).click();
+  await page.getByLabel("播放 本地测试音乐", { exact: true }).click();
   await page.waitForFunction(
     () => document.querySelector("audio").currentTime > 0.05,
   );
@@ -1448,6 +1480,7 @@ try {
         bar: bar.toJSON(),
         main: main.toJSON(),
         background: getComputedStyle(element).backgroundColor,
+        position: getComputedStyle(element).position,
         controls: [
           ...element.querySelectorAll(
             "button, summary, .global-mini-timeline input",
@@ -1455,6 +1488,11 @@ try {
         ].map((control) => control.getBoundingClientRect().toJSON()),
       };
     });
+    assert.equal(layout.position, "fixed");
+    assert.ok(
+      layout.bar.bottom <= 900 && layout.bar.bottom >= 870,
+      `dock stays at viewport bottom at ${width}`,
+    );
     assert.ok(layout.bar.width <= 1001, `compact player at ${width}`);
     assert.ok(
       Math.abs(
@@ -1468,7 +1506,7 @@ try {
       layout.bar.x >= 0 && layout.bar.right <= width,
       `player stays within ${width}`,
     );
-    assert.match(layout.background, /0\.76/, "player surface is translucent");
+    assert.match(layout.background, /0\.92/, "player surface is translucent");
     for (const control of layout.controls) {
       assert.ok(
         control.width > 0 &&
@@ -1477,6 +1515,15 @@ try {
         `player controls fit at ${width}`,
       );
     }
+    assert.ok(
+      await miniPlayer.locator("button, summary").evaluateAll((elements) =>
+        elements.every((e) => {
+          const box = e.getBoundingClientRect();
+          return box.width >= 44 && box.height >= 44;
+        }),
+      ),
+      `dock touch targets at ${width}`,
+    );
     const volumeToggle = miniPlayer.getByLabel("调节全局音量", { exact: true });
     await volumeToggle.click();
     const volume = miniPlayer.getByRole("slider", {
@@ -1499,6 +1546,40 @@ try {
       });
     }
     await volumeToggle.click();
+    if (width === 320 || width === 390) {
+      await songMenu("本地测试音乐");
+      const popup = page.locator(".song-action-menu:popover-open");
+      const box = await popup.boundingBox();
+      assert.ok(
+        box.x >= 0 &&
+          box.x + box.width <= width &&
+          box.y >= 0 &&
+          box.y + box.height <= 900,
+        `song menu fits at ${width}`,
+      );
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+      await page.evaluate(() =>
+        window.scrollTo(0, document.documentElement.scrollHeight),
+      );
+      const last = await page
+        .locator(".music-library .management-help")
+        .boundingBox();
+      const dock = await miniPlayer.boundingBox();
+      assert.ok(
+        last.y + last.height <= dock.y,
+        `last content scrolls above dock at ${width}`,
+      );
+      const nav = page.locator('nav[aria-label="主导航"]');
+      const bounds = await nav.boundingBox();
+      const active = await nav.locator('[aria-current="page"]').boundingBox();
+      assert.ok(
+        active.x >= bounds.x - 1 &&
+          active.x + active.width <= bounds.x + bounds.width + 1,
+        "active navigation stays in view",
+      );
+      await page.evaluate(() => window.scrollTo(0, 0));
+    }
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "正在播放", exact: true }).click();
@@ -1514,6 +1595,7 @@ try {
   await expect(
     page.getByLabel("编辑歌曲 本地测试音乐", { exact: true }),
   ).toHaveCount(0);
+  await songMenu("本地测试音乐");
   await page.getByLabel("整理歌曲 本地测试音乐", { exact: true }).click();
   await expect(page.locator(".sidebar .nav-item.active")).toHaveText(
     "刮削整理",
@@ -1522,6 +1604,7 @@ try {
   await expect(page.locator(".workbench-submit")).toContainText(
     "已选 1 首歌曲",
   );
+  await songMenu("本地测试音乐");
   await page.getByLabel("编辑歌曲 本地测试音乐", { exact: true }).click();
   await page.getByLabel("歌曲标题", { exact: true }).fill("修改后的本地歌曲");
   await page.getByRole("button", { name: "保存歌曲信息", exact: true }).click();
@@ -1557,10 +1640,12 @@ try {
     path: "../output/test-ui-file-management-mobile.png",
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await expand(".library-batch-actions");
   await page.getByRole("button", { name: "送往刮削整理", exact: true }).click();
   await expect(page.locator(".workbench-submit")).toContainText(
     "已选 1 首歌曲",
   );
+  await expand(".library-batch-actions");
   await page.getByLabel("更多音乐管理操作").selectOption("edit");
   await expect(
     page.getByRole("dialog", { name: "编辑选中歌曲" }),
@@ -1583,7 +1668,19 @@ try {
   assert.equal(libraryJobs[0].status, "ready");
   await page.screenshot({ path: "../output/test-ui-library-tag-diff.png" });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    const after = page
+      .locator('.tag-diff td[data-label="修改后"]')
+      .filter({ hasText: "2026-10-23" });
+    await expect(after).toBeVisible();
+    assert.ok(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    );
+  }
+  await page.locator(".tag-diff").screenshot({
     path: "../output/test-ui-library-tag-diff-mobile.png",
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -1716,6 +1813,7 @@ try {
   await expect(page.locator(".processing-list-row")).toHaveCount(2);
   await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
   await page.getByLabel("全选音乐文件").check();
+  await expand(".library-batch-actions");
   await page.getByLabel("更多音乐管理操作").selectOption("rename");
   await page
     .getByLabel("文件名模板", { exact: true })
@@ -1728,6 +1826,7 @@ try {
   );
   await expect(page.getByRole("link", { name: "导出处理报告" })).toBeVisible();
   await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
+  await expand(".library-batch-actions");
   await page.getByLabel("更多音乐管理操作").selectOption("duplicates");
   await page.getByLabel("检查方式", { exact: true }).selectOption("audio");
   await page.getByRole("button", { name: "预览修改", exact: true }).click();
@@ -1736,6 +1835,7 @@ try {
   );
   assert.equal(lastLibraryBody.duplicate_mode, "audio");
   await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
+  await expand(".library-batch-actions");
   await page.getByLabel("更多音乐管理操作").selectOption("convert");
   await page.getByLabel("输出格式", { exact: true }).selectOption("opus");
   await page.getByLabel("采样率", { exact: true }).selectOption("48000");
@@ -1755,6 +1855,7 @@ try {
   ).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
+  await expand(".library-batch-actions");
   await page.getByLabel("更多音乐管理操作").selectOption("split");
   await page
     .getByLabel("CUE 文本（可选）", { exact: true })
@@ -1763,6 +1864,7 @@ try {
   await expect(page.locator(".processing-heading")).toContainText("CUE 分轨");
   assert.match(lastLibraryBody.cue, /INDEX 01/);
   await page.getByRole("tab", { name: "选择与处理", exact: true }).click();
+  await expand(".library-batch-actions");
   await page.getByLabel("更多音乐管理操作").selectOption("clean");
   await page.getByLabel("中文转换", { exact: true }).selectOption("simplified");
   await page
@@ -1835,6 +1937,7 @@ try {
     .toBe(true);
   navDeleteEnabled = true;
   await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await songMenu("远程歌曲");
   await page.getByLabel("删除原文件 远程歌曲", { exact: true }).click();
   const deletionDialog = page.getByRole("dialog", {
     name: "删除 Navidrome 原文件",
@@ -1848,6 +1951,7 @@ try {
     .getByRole("button", { name: "取消", exact: true })
     .click();
   assert.equal(navDeletes, 0);
+  await songMenu("远程歌曲");
   await page.getByLabel("删除原文件 远程歌曲", { exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await deletionDialog.screenshot({
@@ -1998,10 +2102,12 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("tab", { name: "本地音乐", exact: true }).click();
   await page.getByLabel("全选音乐文件").check();
+  await expand(".library-batch-actions");
   await page.getByRole("button", { name: "删除选中文件", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("永久删除 1 个文件");
   await page.getByRole("button", { name: "取消", exact: true }).click();
   assert.equal(libraryFiles.length, 2);
+  await expand(".library-batch-actions");
   await page.getByRole("button", { name: "删除选中文件", exact: true }).click();
   await page.getByRole("button", { name: "确认操作", exact: true }).click();
   await expect(page.locator(".music-table tbody tr")).toHaveCount(0);
@@ -2312,6 +2418,7 @@ try {
   await page
     .getByLabel("请求超时（秒，0 表示不限）", { exact: true })
     .fill("0");
+  await expand(".connection-options");
   await page.getByLabel("搜索使用浏览器指纹", { exact: false }).check();
   await page
     .getByLabel("音源代理作用范围", { exact: true })
@@ -2455,7 +2562,7 @@ try {
   }
   await page.setViewportSize({ width: 1920, height: 1000 });
   await page.screenshot({ path: "../output/test-ui-settings-wide.png" });
-  await page.locator(".engine-switches").screenshot({
+  await page.locator(".settings-behavior > .engine-switches").screenshot({
     path: "../output/test-ui-engine-checkboxes.png",
   });
   await changeTheme("dark");
@@ -2551,6 +2658,8 @@ try {
     .getByRole("button", { name: "导入并保存歌单", exact: true })
     .click();
   await expect(page.locator(".playlist-heading h2")).toHaveText("通勤歌单");
+  await expect(page.locator(".playlist-issues")).not.toHaveAttribute("open");
+  await expand(".playlist-issues");
   await expect(page.locator(".playlist-issues")).toContainText("可能");
   await expect(page.locator(".playlist-issues")).toContainText("其它版本可播");
   assert.equal(await page.locator(".track-table tbody tr").count(), 1);
@@ -2558,10 +2667,27 @@ try {
     page.getByRole("button", { name: "移出歌单 测试曲目", exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: "../output/test-ui-playlist-detail.png" });
+  await expand(".playlist-manage");
   await page.getByRole("button", { name: "重命名", exact: true }).click();
   await page.getByLabel("歌单名称", { exact: true }).fill("晚间歌单");
+  let releaseRename;
+  const renamePending = new Promise((resolve) => {
+    releaseRename = resolve;
+  });
+  const holdRename = async (route) => {
+    if (route.request().method() === "PATCH") await renamePending;
+    await route.fallback();
+  };
+  await page.route("**/api/playlists/*", holdRename);
   await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "保存中…", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  releaseRename();
   await expect(page.locator(".playlist-heading h2")).toHaveText("晚间歌单");
+  await page.unroute("**/api/playlists/*", holdRename);
   await page.getByRole("button", { name: "所有歌单", exact: true }).click();
   await expect(page.locator(".saved-playlist")).toContainText("晚间歌单");
   await page.screenshot({ path: "../output/test-ui-playlist-library.png" });
@@ -2606,6 +2732,7 @@ try {
     .getByRole("button", { name: "移出歌单 测试曲目", exact: true })
     .click();
   await expect(page.locator(".track-table tbody tr")).toHaveCount(0);
+  await expand(".playlist-manage");
   await page.getByRole("button", { name: "删除歌单", exact: true }).click();
   await page.getByRole("button", { name: "确认删除", exact: true }).click();
   await expect(page.locator(".saved-playlist")).toHaveCount(0);
@@ -2760,6 +2887,7 @@ try {
     .click();
   await expect(page.locator(".track-table tbody tr")).toHaveCount(1);
   assert.deepEqual(remoteWrites.at(-1).body.indexes, [1]);
+  await expand(".playlist-manage");
   await page.getByRole("button", { name: "重命名", exact: true }).click();
   const renameDialog = page.getByRole("dialog");
   await renameDialog.locator("input").fill("管理后的远程歌单");
@@ -2767,6 +2895,7 @@ try {
   await expect(page.locator(".playlist-heading h2")).toHaveText(
     "管理后的远程歌单",
   );
+  await expand(".playlist-manage");
   await page.getByRole("button", { name: "删除歌单", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("音乐文件");
   await page.getByRole("button", { name: "确认删除", exact: true }).click();

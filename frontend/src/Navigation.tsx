@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -50,6 +50,24 @@ export function Navigation({
     return defaults;
   });
   const dragged = useRef<NavigationView | null>(null);
+  const navigation = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = navigation.current;
+    if (!nav) return;
+    const reveal = () => {
+      const item = nav.querySelector<HTMLElement>('[aria-current="page"]');
+      if (!item) return;
+      const box = item.getBoundingClientRect(),
+        bounds = nav.getBoundingClientRect();
+      if (box.left < bounds.left || box.right > bounds.right)
+        nav.scrollLeft +=
+          box.left - bounds.left - (bounds.width - box.width) / 2;
+    };
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [active, order]);
   function save(next: NavigationView[]) {
     setOrder(next);
     try {
@@ -66,7 +84,7 @@ export function Navigation({
   }
   return (
     <div className="navigation-group">
-      <nav aria-label="主导航">
+      <nav ref={navigation} aria-label="主导航">
         {order.map((id, index) => {
           const [, label, Icon] = items.find(([value]) => value === id)!;
           return (
