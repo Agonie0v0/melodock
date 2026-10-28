@@ -152,12 +152,16 @@ Telegram 文档标注云端新文件发送上限为 50 MB，官方 [Local Bot AP
 
 搜索、播放或通知失败时，在 **运行日志** 中按类别和错误级别筛选并导出。日志保留当前进程最近 800 条，重启后清空；Windows 启动问题查看 `logs/startup.log`。
 
-部分 CDN 证书异常时，试听会对不携带账号凭据的请求执行兼容重试。需要严格证书校验时设置 `MELOKEEP_PREVIEW_STRICT_TLS=1`；这不改变原下载器行为。
+试听和下载始终验证 TLS 证书，证书异常会报告失败，不再自动跳过验证。音源资源、封面和 HLS 分片仅允许公网地址，逐次验证跳转并固定实际连接的 IP；跨站跳转会移除账号凭据。音源请求只使用显式配置的代理，HTTP 代理需要支持 CONNECT。Navidrome 和 Telegram 的显式内网服务配置继续支持。
+
+依赖请通过 `python install_dependencies.py` 安装。安装器校验固定 musicdl wheel 的 SHA256，仅调整其依赖元数据以兼容修复后的 cryptography，保留原引擎代码，并检查依赖一致性。引擎随 MeloKeep 升级，禁用单独的网页自更新，避免恢复旧的安全依赖限制。
+
+安全依赖下限为 cryptography 50.0.0、Brotli 1.2.1、curl-cffi 0.17.0、certifi 2026.10.19。curl-cffi 自带的 Brotli 与 Python 的 Brotli 包彼此独立，因此需要同时升级。已有容器需要重新构建并替换镜像才能使用这些修复。
 
 ## 开发检查
 
 ```sh
-python -m pip install -r requirements.txt pytest httpx
+python install_dependencies.py pytest httpx
 npm ci --prefix frontend
 npm run build --prefix frontend
 npm run format:check --prefix frontend

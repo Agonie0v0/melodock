@@ -313,7 +313,7 @@ cd melokeep
 已有依赖的手动运行方式：
 
 ```sh
-python -m pip install -r requirements.txt
+python install_dependencies.py
 npm ci --prefix frontend
 npm run build --prefix frontend
 python app.py
@@ -324,7 +324,7 @@ python app.py
 开发验证：
 
 ```sh
-python -m pip install -r requirements.txt pytest httpx imageio-ffmpeg
+python install_dependencies.py pytest httpx imageio-ffmpeg
 npm run format:check --prefix frontend
 npm test --prefix frontend
 npm run build --prefix frontend

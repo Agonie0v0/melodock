@@ -3,7 +3,6 @@ import base64
 import copy
 import hashlib
 import html
-import ipaddress
 import os
 import re
 import socket
@@ -15,32 +14,12 @@ from difflib import SequenceMatcher
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
-
-
-class _CoverHTTPSAdapter(requests.adapters.HTTPAdapter):
-    """Keep certificate validation and SNI on the original host when dialing its IP."""
-    def __init__(self, hostname):
-        self.hostname = hostname
-        super().__init__()
-
-    def init_poolmanager(self, *args, **kwargs):
-        super().init_poolmanager(*args, assert_hostname=self.hostname, server_hostname=self.hostname, **kwargs)
-
-    def proxy_manager_for(self, proxy, **kwargs):
-        return super().proxy_manager_for(proxy, assert_hostname=self.hostname, server_hostname=self.hostname, **kwargs)
+from public_http import PinnedHTTPSAdapter as _CoverHTTPSAdapter, public_url
 
 
 def _public_cover_url(url):
-    parsed = urlsplit(url)
-    if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError('封面地址无效')
+    parsed, addresses = public_url(url)
     port = parsed.port or (443 if parsed.scheme == 'https' else 80)
-    try:
-        addresses = [str(ipaddress.ip_address(parsed.hostname))]
-    except ValueError:
-        addresses = list(dict.fromkeys(item[4][0] for item in socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)))
-    if not addresses or any(not ipaddress.ip_address(address).is_global or ipaddress.ip_address(address).is_multicast for address in addresses):
-        raise ValueError('封面地址必须指向公网')
     # Dial the validated address directly so a second DNS lookup cannot reach the LAN.
     destinations = []
     for address in addresses:

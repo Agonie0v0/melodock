@@ -50,18 +50,11 @@ def transfer(provider, song, overrides, progress, task_id):
         options['cookies'] = song.default_download_cookies
     response = None
     try:
-        # Preserve the original engine's request backend, proxies and TLS fallback.
-        try:
-            response = provider.get(song.download_url, stream=True, **options)
-            if not (offset and response.status_code == 416):
-                response.raise_for_status()
-        except Exception:
-            if response is not None:
-                response.close()
-            options['verify'] = False
-            response = provider.get(song.download_url, stream=True, **options)
-            if not (offset and response.status_code == 416):
-                response.raise_for_status()
+        response = provider.get(song.download_url, stream=True, **options)
+        if response is None:
+            raise RuntimeError('音源未返回下载响应')
+        if not (offset and response.status_code == 416):
+            response.raise_for_status()
 
         if response.status_code == 416 and offset:
             # The process may stop after the last byte, before the completion

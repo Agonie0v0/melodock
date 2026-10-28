@@ -186,7 +186,7 @@ def kuwo_song_info(provider, search_result, download_result, download_url_status
 
 
 def _parsewithhaitangwserverapi(self, search_result: dict, request_overrides: dict = None):
-    import requests
+    from public_http import provider_requests as requests
     from musicdl.modules import AudioLinkTester, SongInfo
     from musicdl.modules.sources.qq import resp2json, safeextractfromdict
     request_overrides = request_overrides or {}
@@ -251,7 +251,7 @@ def _parsewithqqovoapi_netease(self, search_result: dict, request_overrides: dic
     import hmac
     import uuid
     from urllib.parse import parse_qsl, urlparse
-    import requests
+    from public_http import provider_requests as requests
     from musicdl.modules import AudioLinkTester, SongInfo
     from musicdl.modules.sources.qq import resp2json, safeextractfromdict
     request_overrides = request_overrides or {}
@@ -303,7 +303,7 @@ def _parsewithqqovoapi_netease(self, search_result: dict, request_overrides: dic
 
 
 def _parsewithcocodownloaderapi(self, search_result: dict, request_overrides: dict = None):
-    import requests
+    from public_http import provider_requests as requests
     from musicdl.modules import AudioLinkTester, SongInfo
     from musicdl.modules.sources.qq import resp2json, safeextractfromdict
     request_overrides = request_overrides or {}
@@ -337,7 +337,7 @@ def _parsewithcocodownloaderapi(self, search_result: dict, request_overrides: di
 
 def _parsewithyuafengapi(self, search_result: dict, request_overrides: dict = None):
     from urllib.parse import quote
-    import requests
+    from public_http import provider_requests as requests
     from musicdl.modules import AudioLinkTester, SongInfo
     from musicdl.modules.sources.qq import cleanlrc, resp2json, safeextractfromdict
     request_overrides = request_overrides or {}

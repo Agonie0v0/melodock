@@ -27,9 +27,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && mkdir -p /music /data /app/frontend /licenses && chown -R melokeep:melokeep /music /data /app
 WORKDIR /app
 ENV HOME=/home/melokeep
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py engine_api.py engine_worker.py search_runtime.py provider_compat.py local_library.py library_pipeline.py library_rules.py audio_tools.py metadata_scraper.py navidrome.py resumable_download.py bot_notifications.py telegram_local.py error_messages.py runtime_config.py docker-entrypoint.py ./
+COPY requirements.txt install_dependencies.py ./
+RUN python install_dependencies.py --no-cache-dir
+COPY app.py engine_api.py engine_worker.py search_runtime.py provider_compat.py public_http.py local_library.py library_pipeline.py library_rules.py audio_tools.py metadata_scraper.py navidrome.py resumable_download.py bot_notifications.py telegram_local.py error_messages.py runtime_config.py docker-entrypoint.py ./
 COPY legacy/app.py ./legacy/app.py
 COPY --from=frontend /build/frontend/dist /app/frontend/dist
 COPY LICENSE-musicsquare LICENSE-search-engine /licenses/

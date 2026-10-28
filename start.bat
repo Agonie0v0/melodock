@@ -5,10 +5,10 @@ if exist runtime\python.exe goto bundled
 if exist .venv\Scripts\python.exe goto source
 where python >nul 2>&1 || goto needpython
 python -m venv .venv || goto failed
-.venv\Scripts\python.exe -m pip install -r requirements.txt || goto failed
+.venv\Scripts\python.exe install_dependencies.py || goto failed
 :source
-.venv\Scripts\python.exe -c "import requests_toolbelt" >nul 2>&1
-if errorlevel 1 .venv\Scripts\python.exe -m pip install -r requirements.txt || goto failed
+.venv\Scripts\python.exe -c "import requests_toolbelt; import importlib.metadata as m; assert m.version('musicdl') == '2.14.0+melokeep.1'" >nul 2>&1
+if errorlevel 1 .venv\Scripts\python.exe install_dependencies.py || goto failed
 if not exist frontend\dist\index.html (
   where npm >nul 2>&1 || goto neednode
   pushd frontend

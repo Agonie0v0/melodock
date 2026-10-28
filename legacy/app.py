@@ -28,6 +28,11 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
+# The legacy entry point also runs directly from its own directory.
+_project_modules = str(Path(__file__).resolve().parent.parent)
+if _project_modules not in sys.path:
+    sys.path.insert(0, _project_modules)
+
 import requests as pyrequests
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
@@ -244,6 +249,10 @@ def _hookloggerclass():
 
 
 _hookloggerclass()
+
+# Security boundaries are required; fail startup if the pinned engine cannot be guarded.
+from public_http import install as install_public_http
+install_public_http(lambda: manager.config)
 
 try:
     from provider_compat import install
@@ -733,16 +742,16 @@ def enginelatest():
         raise HTTPException(502, f'查询 PyPI 失败: {err}')
 
 
-# --- in-app upgrade: pip install -U musicdl, then restart to load it ---------
+# The engine is pinned together with its required security compatibility layer.
 UPDATE_STATE = {'running': False, 'ok': None, 'detail': '', 'to': None}
 UPDATE_LOCK = threading.Lock()
-SELF_UPDATE_ENABLED = _env_flag('MELOKEEP_ALLOW_SELF_UPDATE', default=not Path('/.dockerenv').exists())
+SELF_UPDATE_ENABLED = False
 
 
 def _runupdate():
     import subprocess
     try:
-        proc = subprocess.run([sys.executable, '-m', 'pip', 'install', '-U', 'musicdl'],
+        proc = subprocess.run([sys.executable, str(Path(__file__).resolve().parent.parent / 'install_dependencies.py')],
                               capture_output=True, text=True, timeout=600)
         out = ((proc.stdout or '') + (proc.stderr or '')).strip()
         if proc.returncode != 0:
@@ -771,7 +780,7 @@ def _runupdate():
 def engineupdate():
     '''upgrade musicdl in the background (new version loads after restart)'''
     if not SELF_UPDATE_ENABLED:
-        raise HTTPException(403, '当前部署已禁用运行时自更新，请通过重建镜像升级')
+        raise HTTPException(403, '引擎与安全依赖随 MeloKeep 一起升级，请更新源码或重建镜像')
     with UPDATE_LOCK:
         if UPDATE_STATE['running']:
             return {'started': False, 'running': True}
@@ -923,35 +932,10 @@ def _preview_get(client, url, options):
 
 
 def preview_request(client, source, url, options):
-    response = None
-    try:
-        response = _preview_get(client, url, options)
-        if response is not None:
-            return response
+    response = _preview_get(client, url, options)
+    if response is None:
         raise RuntimeError('原音源客户端未返回音频响应')
-    except Exception:
-        host = urlsplit(url).hostname or ''
-        headers = options.get('headers') or {}
-        session = getattr(client, 'session', None)
-        session_headers = getattr(session, 'headers', {}) or {}
-        has_credentials = (options.get('cookies') or options.get('auth') or getattr(session, 'auth', None)
-                           or getattr(session, 'cookies', None)
-                           or any(k.lower() in {'authorization', 'cookie', 'proxy-authorization'}
-                                  for k in [*headers, *session_headers]))
-        # The Kugou FLAC CDN serves a mismatched certificate. Match the original
-        # downloader's compatibility retry only for credential-free audio CDNs.
-        compatible_cdn = source == 'KugouMusicClient' and re.fullmatch(r'fs(?:[a-z0-9]*|\.[a-z0-9-]+)\.kugou\.com', host)
-        explicit_verification = 'verify' in options and options['verify'] is not False
-        if urlsplit(url).scheme != 'https' or not compatible_cdn or has_credentials or explicit_verification or _env_flag('MELOKEEP_PREVIEW_STRICT_TLS'):
-            raise
-        if response is not None:
-            response.close()
-        pushlog('warning', '酷狗音频 CDN 请求失败，使用原引擎的证书兼容重试；未发送账号 Cookie 或认证头', category='playback')
-        retry = {**options, 'verify': False, 'allow_redirects': False}
-        response = _preview_get(client, url, retry)
-        if response is None:
-            raise RuntimeError('酷狗音频 CDN 兼容重试失败')
-        return response
+    return response
 
 
 @app.get('/api/stream/{sid}')

@@ -156,21 +156,16 @@ def test_preview_uses_original_download_backend_cookies_and_request_overrides(mo
     ('other.example.org', {}, False, False),
     ('fs.youthandroid2.kugou.com.evil.example', {}, False, False),
 ])
-def test_kugou_certificate_retry_is_scoped_to_public_audio_cdn(monkeypatch, host, cookies, strict, compatible):
+def test_preview_never_retries_with_certificate_verification_disabled(monkeypatch, host, cookies, strict, compatible):
     from unittest.mock import Mock
     response = Mock()
     provider = SimpleNamespace(default_download_headers={}, default_download_cookies={}, get=Mock(side_effect=[None, response]))
     monkeypatch.setenv('MELOKEEP_PREVIEW_STRICT_TLS', '1' if strict else '0')
     options = {'headers': {'Range': 'bytes=0-'}, 'cookies': cookies}
-    if compatible:
-        assert app.preview_request(provider, 'KugouMusicClient', f'https://{host}/file.flac', options) is response
-        assert provider.get.call_args.kwargs['verify'] is False
-        assert provider.get.call_args.kwargs['allow_redirects'] is False
-        assert 'verify' not in options
-    else:
-        with pytest.raises(RuntimeError):
-            app.preview_request(provider, 'KugouMusicClient', f'https://{host}/file.flac', options)
-        assert provider.get.call_count == 1
+    with pytest.raises(RuntimeError):
+        app.preview_request(provider, 'KugouMusicClient', f'https://{host}/file.flac', options)
+    assert provider.get.call_count == 1
+    assert 'verify' not in options
 
 
 def test_range_in_middle_of_audio_is_not_mistaken_for_error_json(monkeypatch):

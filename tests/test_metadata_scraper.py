@@ -79,7 +79,8 @@ def test_cover_pins_addresses_and_validates_every_redirect(monkeypatch):
 
 
 @pytest.mark.parametrize('via_proxy', [False, True])
-def test_cover_pinned_https_preserves_certificate_validation(monkeypatch, tmp_path, via_proxy):
+@pytest.mark.parametrize('backend', ['cover', 'requests', 'curl'])
+def test_cover_pinned_https_preserves_certificate_validation(monkeypatch, tmp_path, via_proxy, backend):
     import datetime
     import ssl
     import select
@@ -108,6 +109,7 @@ def test_cover_pinned_https_preserves_certificate_validation(monkeypatch, tmp_pa
         def do_GET(self):
             seen.append(self.headers['Host'])
             self.send_response(200)
+            self.send_header('Content-Length', str(len(b'\x89PNG\r\n\x1a\nfixture')))
             self.end_headers()
             self.wfile.write(b'\x89PNG\r\n\x1a\nfixture')
         def log_message(self, *args): pass
@@ -159,11 +161,40 @@ def test_cover_pinned_https_preserves_certificate_validation(monkeypatch, tmp_pa
     monkeypatch.setattr(urllib3.util.connection, 'create_connection', connect)
     try:
         scraper = MetadataScraper(lambda: {'proxy_scope': 'all', 'proxy_url': f'http://127.0.0.1:{proxy.server_port}'} if proxy else {})
-        assert scraper.cover('https://cover.example/image')[1] == 'image/png'
-        assert seen == ['cover.example'] and sni == ['cover.example']
-        if proxy: assert tunnels == ['93.184.216.34:443']
-        with pytest.raises(requests.exceptions.SSLError):
-            scraper.cover('https://wrong.example/image')
+        def load(host):
+            if backend == 'cover':
+                return scraper.cover(f'https://{host}/image')[1]
+            import public_http
+            from contextlib import closing
+            if backend == 'curl':
+                from curl_cffi.requests import Session
+                from curl_cffi.requests.exceptions import SSLError
+                original_public_url = public_http.public_url
+                def pinned_test_host(url):
+                    parsed, _ = original_public_url(url)
+                    return parsed, ['127.0.0.1']
+                # C libcurl cannot use the Python socket fixture; pin this listener directly.
+                with monkeypatch.context() as curl_patch:
+                    curl_patch.setattr(public_http, 'public_url', pinned_test_host)
+                    with Session(verify=str(cert_file)) as client:
+                        with closing(public_http.request(client, 'GET', f'https://{host}:{server.server_port}/image',
+                            proxies={'https': f'http://127.0.0.1:{proxy.server_port}'} if proxy else {})) as response:
+                            assert response.content.startswith(b'\x89PNG')
+            else:
+                with session() as client:
+                    with closing(public_http.request(client, 'GET', f'https://{host}:{server.server_port}/image',
+                        proxies={'https': f'http://127.0.0.1:{proxy.server_port}'} if proxy else {})) as response:
+                        assert response.content.startswith(b'\x89PNG')
+            return 'image/png'
+        assert load('cover.example') == 'image/png'
+        assert seen == ['cover.example' + (f':{server.server_port}' if backend != 'cover' else '')]
+        assert sni == ['cover.example']
+        if proxy:
+            ip = '127.0.0.1' if backend == 'curl' else '93.184.216.34'
+            assert tunnels == [f'{ip}:{443 if backend == "cover" else server.server_port}']
+        from curl_cffi.requests.exceptions import SSLError as CurlSSLError
+        with pytest.raises((requests.exceptions.SSLError, CurlSSLError)):
+            load('wrong.example')
     finally:
         server.shutdown()
         server.server_close()

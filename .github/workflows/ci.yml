@@ -13,7 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
-      - run: python -m pip install -r requirements.txt pytest httpx imageio-ffmpeg
+      - run: python install_dependencies.py pytest httpx imageio-ffmpeg
+      - run: python -m pytest tests/test_public_http.py tests/test_install_dependencies.py -q
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'

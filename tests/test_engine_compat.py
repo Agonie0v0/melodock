@@ -25,6 +25,7 @@ from musicdl.modules import SongInfo
 import app
 import engine_worker
 import engine_api
+from public_http import provider_requests
 from engine_api import SearchBody
 
 HEADERS = {'X-MeloKeep-Request': '1'}
@@ -1001,7 +1002,7 @@ def test_episodes_and_non_http_download_results_are_not_blocked():
     assert result['qualities']
 
 
-def test_pause_preserves_bytes_and_new_worker_resumes_original_download():
+def test_pause_preserves_bytes_and_new_worker_resumes_original_download(monkeypatch, tmp_path):
     received, ranges = {}, []
     audio = io.BytesIO()
     frames = bytes(range(256)) * 1024
@@ -1034,13 +1035,33 @@ def test_pause_preserves_bytes_and_new_worker_resumes_original_download():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    # The production transport rejects loopback URLs. Map one fixture hostname
+    # to this listener in both the parent and fresh worker processes, in tests only.
+    import public_http
+    original_public_url = public_http.public_url
+    def fixture_url(url):
+        parsed = public_http.urlsplit(url)
+        if parsed.hostname == 'download-fixture.example' and parsed.port == server.server_port:
+            return parsed, ['127.0.0.1']
+        return original_public_url(url)
+    monkeypatch.setattr(public_http, 'public_url', fixture_url)
+    (tmp_path / 'sitecustomize.py').write_text(
+        'import public_http\n'
+        '_original = public_http.public_url\n'
+        'def fixture_url(url):\n'
+        '    parsed = public_http.urlsplit(url)\n'
+        f'    if parsed.hostname == "download-fixture.example" and parsed.port == {server.server_port}:\n'
+        '        return parsed, ["127.0.0.1"]\n'
+        '    return _original(url)\n'
+        'public_http.public_url = fixture_url\n', encoding='utf-8')
+    monkeypatch.setenv('PYTHONPATH', str(tmp_path) + os.pathsep + str(Path(__file__).resolve().parents[1]))
     client = TestClient(app.app)
     try:
         song = fixture_song()
         song.identifier = 'cancel-case'
         song.downloaded_contents = None
         song.chunk_size = 256
-        song.download_url = f'http://127.0.0.1:{server.server_port}/generated.wav'
+        song.download_url = f'http://download-fixture.example:{server.server_port}/generated.wav'
         value = app.app.state.engine_test['remember'](song)
         response = client.post('/api/downloads', headers=HEADERS, json=[{'track_id':value['id'], 'quality_id':value['qualities'][0]['id']}])
         assert response.status_code == 200
@@ -1308,7 +1329,7 @@ def test_qq_missing_master_quality_continues_to_lossless_without_unbound_song(mo
                                 title='稻香', singer='周杰伦', album_name='魔杰座', lyric='[03:43.00]歌词')
         value._content = json.dumps(data).encode()
         return value
-    monkeypatch.setattr(requests, 'get', response)
+    monkeypatch.setattr(provider_requests, 'get', response)
     log_id = app.original.LOG_SEQUENCE
     result = getattr(provider, parser)(metadata, {'timeout': 17, 'headers': {'X-Custom': 'preserve'}})
     assert result.with_valid_download_url is available
@@ -1380,7 +1401,7 @@ def test_native_parser_request_overrides_reach_http_without_keyword_collision(mo
     def request(url, **kwargs):
         captured.append(kwargs)
         raise ReachedHTTP('isolated transport')
-    monkeypatch.setattr(requests, 'post', request)
+    monkeypatch.setattr(provider_requests, 'post', request)
     overrides = {'timeout': 30, 'headers': {'X-Test': 'override'}, 'verify': True,
                  'proxies': {'https': 'http://localhost:7890'}}
     result = {'hash': 'test', 'mid': 'test', 'id': 'test', 'duration': 200,
@@ -1417,7 +1438,7 @@ def test_parser_failures_and_audio_sizes_are_forwarded_to_search_logs(monkeypatc
     provider = native_quality_provider('KugouMusicClient')
     def fail(url, **kwargs):
         raise requests.ConnectionError('https://example.org/private?token=secret')
-    monkeypatch.setattr(requests, 'post', fail)
+    monkeypatch.setattr(provider_requests, 'post', fail)
     path = tmp_path / 'search.log'
     with engine_worker.capture_logs(path, 'search', 'quality-diagnostic'):
         with pytest.raises(requests.ConnectionError):
@@ -1441,7 +1462,7 @@ def test_failed_primary_recovers_flac_through_real_native_backup_parser(monkeypa
     response = requests.Response()
     response.status_code = 200
     response._content = json.dumps({'data': 'https://example.org/test.flac'}).encode()
-    monkeypatch.setattr(requests, 'post', lambda *args, **kwargs: response)
+    monkeypatch.setattr(provider_requests, 'post', lambda *args, **kwargs: response)
     provider.audio_link_tester = SimpleNamespace(test=lambda **kwargs: {
         'ok': True, 'ext': 'flac', 'file_size_bytes': 88706509, 'file_size': '84.6 MB',
         'download_url': 'https://example.org/test.flac'})
@@ -1492,8 +1513,8 @@ def test_qq_rate_limited_vkeys_falls_back_to_backup_lossless_apis_and_rejects_tr
         else:
             resp._content = json.dumps({'code': -1}).encode()
         return resp
-    monkeypatch.setattr(requests, 'get', fake_get)
-    monkeypatch.setattr(requests, 'post', fake_post)
+    monkeypatch.setattr(provider_requests, 'get', fake_get)
+    monkeypatch.setattr(provider_requests, 'post', fake_post)
     provider.audio_link_tester = SimpleNamespace(test=lambda url, **kwargs: {
         'ok': True, 'ext': 'flac', 'file_size_bytes': 26012257, 'file_size': '24.81 MB',
         'download_url': url})
@@ -1525,7 +1546,7 @@ def test_multi_source_backup_lossless_and_quality_loop_recovery(monkeypatch):
             resp.status_code = 500
             resp._content = b'{}'
         return resp
-    monkeypatch.setattr(requests, 'post', fake_post)
+    monkeypatch.setattr(provider_requests, 'post', fake_post)
     ne.audio_link_tester = SimpleNamespace(test=lambda url, **kwargs: {
         'ok': True, 'ext': 'flac', 'file_size_bytes': 29045555, 'file_size': '27.7 MB', 'download_url': url})
     ne_res = ne._parsewiththirdpartapis(ne_meta, {'timeout': 8})
