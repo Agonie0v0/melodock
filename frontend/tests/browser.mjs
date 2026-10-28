@@ -177,6 +177,8 @@ try {
     playlist = [],
     jobs = [],
     savedPlaylists = [];
+  let playlistSaveFails = false;
+  let playlistSaveGate = null;
   let localTrack = {
     ...track,
     id: "local-fixture",
@@ -635,17 +637,27 @@ try {
       favorites = method === "PUT" ? [track] : [];
       result = { saved: true };
     } else if (p === "/playlist") {
+      if (method === "PUT" && playlistSaveFails) {
+        await route.fulfill({
+          status: 503,
+          json: { detail: "播放列表保存失败，请重试" },
+        });
+        return;
+      }
+      if (method === "PUT" && playlistSaveGate) await playlistSaveGate;
       if (method === "PUT")
         playlist = request
           .postDataJSON()
-          .map((id) =>
-            id === localTrack.id
-              ? localTrack
-              : id === remoteTrack.id
-                ? remoteTrack
-                : savedPlaylists
-                    .flatMap((list) => list.tracks)
-                    .find((item) => item.id === id) || track,
+          .map(
+            (id) =>
+              playlist.find((item) => item.id === id) ||
+              (id === localTrack.id
+                ? localTrack
+                : id === remoteTrack.id
+                  ? remoteTrack
+                  : savedPlaylists
+                      .flatMap((list) => list.tracks)
+                      .find((item) => item.id === id) || track),
           );
       result = method === "PUT" ? { saved: true } : playlist;
     } else if (p === "/playlist/import") {
@@ -3324,6 +3336,123 @@ try {
   await expect(
     page.getByLabel("Telegram Bot Token", { exact: true }),
   ).toHaveValue("");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  // Batch queue management preserves files, selection after errors and playback.
+  playlist = [track, localTrack, remoteTrack];
+  await page.reload();
+  await page.getByRole("button", { name: "搜索音乐", exact: true }).click();
+  await submitSearch("测试");
+  await page
+    .getByRole("button", { name: "播放 测试曲目", exact: true })
+    .click();
+  await page.getByRole("button", { name: "正在播放", exact: true }).click();
+  const queuePanel = page.locator(".album-queue");
+  await queuePanel
+    .getByRole("button", { name: "批量管理", exact: true })
+    .click();
+  await expect(
+    queuePanel.getByRole("button", { name: "移除所选（0）" }),
+  ).toBeDisabled();
+  await queuePanel.getByLabel("全选播放列表", { exact: true }).check();
+  await expect(queuePanel).toContainText("已选 3 / 3 首");
+  await queuePanel.getByRole("button", { name: "完成", exact: true }).click();
+  await page.getByLabel("打开播放列表", { exact: true }).click();
+  const playbackDialog = page.getByRole("dialog", {
+    name: "播放列表",
+    exact: true,
+  });
+  await playbackDialog
+    .getByRole("button", { name: "批量管理", exact: true })
+    .click();
+  await playbackDialog
+    .getByLabel(`选择待播曲目 ${track.title}`, { exact: true })
+    .check();
+  await playbackDialog
+    .getByRole("button", { name: `切换选择 ${localTrack.title}`, exact: true })
+    .click();
+  await expect(playbackDialog).toContainText("已选 2 / 3 首");
+  assert.equal(
+    await playbackDialog
+      .getByLabel("全选播放列表")
+      .evaluate((el) => el.indeterminate),
+    true,
+  );
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+    assert.ok(
+      await playbackDialog.evaluate((el) => el.scrollWidth <= el.clientWidth),
+      `queue fits ${width}`,
+    );
+    assert.ok(
+      await playbackDialog
+        .locator(".playback-list-toolbar button, .playback-list-select")
+        .evaluateAll((els) =>
+          els.every((el) => {
+            const box = el.getBoundingClientRect();
+            return box.width >= 44 && box.height >= 44;
+          }),
+        ),
+      `queue touch targets at ${width}`,
+    );
+    if (width !== 320)
+      await page.screenshot({
+        path: `../output/test-ui-playback-batch-${width}.png`,
+      });
+  }
+  const audioBeforeRemoval = await page
+    .locator("audio")
+    .evaluate((el) => el.src);
+  const queueMutations = [];
+  const recordQueueMutation = (request) => {
+    if (["PUT", "POST", "DELETE", "PATCH"].includes(request.method()))
+      queueMutations.push(new URL(request.url()).pathname);
+  };
+  page.on("request", recordQueueMutation);
+  playlistSaveFails = true;
+  await playbackDialog
+    .getByRole("button", { name: "移除所选（2）", exact: true })
+    .click();
+  await expect(
+    page.getByText("播放列表保存失败，请重试", { exact: true }),
+  ).toBeVisible();
+  await expect(playbackDialog).toContainText("已选 2 / 3 首");
+  assert.equal(playlist.length, 3);
+  playlistSaveFails = false;
+  let releasePlaylistSave;
+  playlistSaveGate = new Promise((resolve) => (releasePlaylistSave = resolve));
+  await playbackDialog
+    .getByRole("button", { name: "移除所选（2）", exact: true })
+    .click();
+  await expect(
+    playbackDialog.getByRole("button", { name: "正在移除…", exact: true }),
+  ).toBeDisabled();
+  await expect(playbackDialog.getByLabel("全选播放列表")).toBeDisabled();
+  releasePlaylistSave();
+  playlistSaveGate = null;
+  await expect(playbackDialog.locator(".playlist-item")).toHaveCount(1);
+  assert.deepEqual(
+    playlist.map((item) => item.id),
+    [remoteTrack.id],
+  );
+  assert.equal(
+    await page.locator("audio").evaluate((el) => el.src),
+    audioBeforeRemoval,
+  );
+  assert.deepEqual(queueMutations, ["/api/playlist", "/api/playlist"]);
+  page.off("request", recordQueueMutation);
+  await page.reload();
+  await page.getByLabel("播放列表", { exact: true }).click();
+  await expect(playbackDialog.locator(".playlist-item")).toHaveCount(1);
+  await playbackDialog
+    .getByRole("button", { name: "批量管理", exact: true })
+    .click();
+  await playbackDialog.getByLabel("全选播放列表", { exact: true }).check();
+  await playbackDialog
+    .getByRole("button", { name: "移除所选（1）", exact: true })
+    .click();
+  await expect(playbackDialog).toContainText("选择搜索结果，加入待播列表。");
+  assert.deepEqual(playlist, []);
+  await playbackDialog.getByLabel("关闭", { exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "搜索音乐", exact: true }).click();
   await submitSearch("错误试听");

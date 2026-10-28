@@ -164,6 +164,10 @@ export function App() {
   }
   const [managing, setManaging] = useState(false);
   const [managementError, setManagementError] = useState("");
+  const [queueManaging, setQueueManaging] = useState(false);
+  const [queueSelected, setQueueSelected] = useState<Set<string>>(new Set());
+  const [queueSaving, setQueueSaving] = useState(false);
+  const queueWritePending = useRef(false);
   const [confirmation, setConfirmation] = useState<{
     title: string;
     description: string;
@@ -637,32 +641,48 @@ export function App() {
       fail(error);
     }
   }
+  async function savePlaybackQueue(next: Track[]) {
+    if (queueWritePending.current) {
+      setNotice("播放列表正在保存，请稍后再试");
+      return false;
+    }
+    queueWritePending.current = true;
+    setQueueSaving(true);
+    try {
+      await api(
+        "/playlist",
+        "PUT",
+        next.map((t) => t.id),
+      );
+      setPlaylist(next);
+      return true;
+    } finally {
+      queueWritePending.current = false;
+      setQueueSaving(false);
+    }
+  }
   async function addToPlaylist(items: Track[]) {
     try {
       const next = [
         ...playlist,
         ...items.filter((t) => !playlist.some((p) => p.id === t.id)),
       ].slice(0, 1000);
-      await api(
-        "/playlist",
-        "PUT",
-        next.map((t) => t.id),
-      );
-      setPlaylist(next);
+      if (!(await savePlaybackQueue(next))) return;
       setNotice(`已加入播放列表，共 ${next.length} 首`);
     } catch (error) {
       fail(error);
     }
   }
-  async function removeFromPlaylist(id: string) {
-    const next = playlist.filter((t) => t.id !== id);
+  async function removeFromPlaylist(ids: string[]) {
+    const removed = new Set(ids);
+    const next = playlist.filter((t) => !removed.has(t.id));
     try {
-      await api(
-        "/playlist",
-        "PUT",
-        next.map((t) => t.id),
+      if (!(await savePlaybackQueue(next))) return;
+      setQueueSelected(new Set());
+      if (!next.length) setQueueManaging(false);
+      setNotice(
+        `已从播放列表移除 ${playlist.length - next.length} 首，音乐文件保留`,
       );
-      setPlaylist(next);
     } catch (error) {
       fail(error);
     }
@@ -914,12 +934,7 @@ export function App() {
       return;
     }
     try {
-      await api(
-        "/playlist",
-        "PUT",
-        items.map((t) => t.id),
-      );
-      setPlaylist(items);
+      if (!(await savePlaybackQueue(items))) return;
       await playSequence(0, items, true);
     } catch (error) {
       fail(error);
@@ -1099,35 +1114,133 @@ export function App() {
       : loadingPlay
         ? "正在准备试听"
         : current?.playback.detail || "尚未播放";
+  const queueSelection = playlist.filter((track) =>
+    queueSelected.has(track.id),
+  );
+  function toggleQueueSelection(id: string) {
+    setQueueSelected((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
   const listContent = (
-    <div className="playlist-items">
-      {playlist.length ? (
-        playlist.map((track) => (
-          <div
-            className={`playlist-item ${current?.id === track.id ? "active" : ""}`}
-            key={track.id}
+    <div className="playback-list" aria-busy={queueSaving}>
+      {!!playlist.length && (
+        <div className="playback-list-toolbar">
+          <span aria-live="polite">
+            {queueManaging
+              ? `已选 ${queueSelection.length} / ${playlist.length} 首`
+              : `共 ${playlist.length} 首`}
+          </span>
+          <button
+            disabled={queueSaving}
+            aria-pressed={queueManaging}
+            onClick={() => {
+              setQueueManaging(!queueManaging);
+              setQueueSelected(new Set());
+            }}
           >
-            <button
-              className="playlist-song"
-              onClick={() => void play(track, playlist, true)}
-            >
-              <Cover track={track} />
-              <span>
-                <strong>{track.title}</strong>
-                <small>{track.artist}</small>
-              </span>
-            </button>
-            <Button
-              label={`移除 ${track.title}`}
-              onClick={() => void removeFromPlaylist(track.id)}
-            >
-              <X />
-            </Button>
-          </div>
-        ))
-      ) : (
-        <p className="empty">选择搜索结果，加入待播列表。</p>
+            {queueManaging ? "完成" : "批量管理"}
+          </button>
+        </div>
       )}
+      {queueManaging && !!playlist.length && (
+        <>
+          <div className="playback-list-toolbar playback-list-actions">
+            <label className="playback-list-select">
+              <input
+                type="checkbox"
+                aria-label="全选播放列表"
+                checked={queueSelection.length === playlist.length}
+                ref={(input) => {
+                  if (input)
+                    input.indeterminate =
+                      queueSelection.length > 0 &&
+                      queueSelection.length < playlist.length;
+                }}
+                disabled={queueSaving}
+                onChange={(event) =>
+                  setQueueSelected(
+                    new Set(
+                      event.target.checked ? playlist.map((t) => t.id) : [],
+                    ),
+                  )
+                }
+              />
+              全选
+            </label>
+            <button
+              className="playback-list-remove"
+              disabled={queueSaving || !queueSelection.length}
+              onClick={() =>
+                void removeFromPlaylist(queueSelection.map((track) => track.id))
+              }
+            >
+              <Trash2 aria-hidden="true" />
+              {queueSaving
+                ? "正在移除…"
+                : `移除所选（${queueSelection.length}）`}
+            </button>
+          </div>
+          <p className="playback-list-hint">仅从播放列表移除，保留音乐文件。</p>
+        </>
+      )}
+      <div className="playlist-items">
+        {playlist.length ? (
+          playlist.map((track) => (
+            <div
+              className={`playlist-item ${current?.id === track.id ? "active" : ""}`}
+              key={track.id}
+            >
+              {queueManaging && (
+                <label className="playback-list-select">
+                  <input
+                    type="checkbox"
+                    aria-label={`选择待播曲目 ${track.title}`}
+                    checked={queueSelected.has(track.id)}
+                    disabled={queueSaving}
+                    onChange={() => toggleQueueSelection(track.id)}
+                  />
+                </label>
+              )}
+              <button
+                className="playlist-song"
+                disabled={queueManaging && queueSaving}
+                aria-label={
+                  queueManaging ? `切换选择 ${track.title}` : undefined
+                }
+                aria-pressed={
+                  queueManaging ? queueSelected.has(track.id) : undefined
+                }
+                onClick={() =>
+                  queueManaging
+                    ? toggleQueueSelection(track.id)
+                    : void play(track, playlist, true)
+                }
+              >
+                <Cover track={track} />
+                <span>
+                  <strong>{track.title}</strong>
+                  <small>{track.artist}</small>
+                </span>
+              </button>
+              {!queueManaging && (
+                <Button
+                  label={`移除 ${track.title}`}
+                  disabled={queueSaving}
+                  onClick={() => void removeFromPlaylist([track.id])}
+                >
+                  <X />
+                </Button>
+              )}
+            </div>
+          ))
+        ) : (
+          <p className="empty">选择搜索结果，加入待播列表。</p>
+        )}
+      </div>
     </div>
   );
   const lyricContent = (

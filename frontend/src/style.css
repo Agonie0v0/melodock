@@ -2107,6 +2107,54 @@ tr.current {
   line-height: 2;
   padding: 20px 0;
 }
+.playback-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.playback-list-toolbar button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.playback-list-toolbar button:hover:not(:disabled) {
+  background: var(--soft);
+}
+.playback-list-actions {
+  border-block: 1px solid var(--line-soft);
+}
+.playback-list-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.playback-list-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--danger);
+}
+.playback-list-remove svg {
+  width: 16px;
+  height: 16px;
+}
+.playback-list-hint {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .playlist-items {
   max-height: 290px;
   overflow: auto;
