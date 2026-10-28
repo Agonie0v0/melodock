@@ -381,6 +381,81 @@ def test_empty_import_is_not_false_success(monkeypatch):
     assert client.get('/api/playlists').json() == before
 
 
+def test_saved_playlist_refreshes_resolved_track_snapshots():
+    client = TestClient(app.app)
+    state = app.app.state.engine_test
+    song = fixture_song()
+    song.identifier = 'playlist-pending-snapshot'
+    pending = copy.deepcopy(song)
+    pending.raw_data['_melokeep_candidate'] = True
+    pending.downloaded_contents, pending.download_url = None, None
+    candidate = state['remember'](pending)
+    created = client.post('/api/playlists', headers=HEADERS,
+                          json={'name': 'pending snapshot', 'track_ids': [candidate['id']]}).json()
+    assert created['tracks'][0]['playback']['state'] == 'pending'
+    resolved = state['remember'](song, candidate['id'])
+    saved = client.get(f"/api/playlists/{created['id']}").json()
+    assert saved['tracks'] == [resolved]
+    assert saved['tracks'][0]['id'] == candidate['id']
+    client.delete(f"/api/playlists/{created['id']}", headers=HEADERS)
+
+
+@pytest.mark.parametrize('operation', ['add', 'rename', 'remove', 'delete'])
+def test_concurrent_playlist_changes_do_not_overwrite_each_other(monkeypatch, operation):
+    from concurrent.futures import ThreadPoolExecutor
+    client = TestClient(app.app)
+    library = app.app.state.engine_test['library']
+    for ident in ['concurrent-initial', 'concurrent-first', 'concurrent-second']:
+        library.put('track', ident, {'track': {'id': ident, 'source': 'custom', 'title': ident}})
+    created = client.post('/api/playlists', headers=HEADERS,
+                          json={'name': 'before', 'track_ids': ['concurrent-initial']}).json()
+    add = endpoint('/api/playlists/{ident}/tracks', 'POST')
+    cell = add.__closure__[add.__code__.co_freevars.index('collection_for')]
+    original = cell.cell_contents
+    first_read, second_read, release_first, second_started = (threading.Event() for _ in range(4))
+    def controlled_read(ident):
+        result = original(ident)
+        if not first_read.is_set():
+            first_read.set()
+            assert release_first.wait(5)
+        else:
+            second_read.set()
+        return result
+    monkeypatch.setattr(cell, 'cell_contents', controlled_read)
+    def second_change():
+        second_started.set()
+        if operation == 'add':
+            return add(created['id'], engine_api.PlaylistTracksBody(track_ids=['concurrent-second']))
+        if operation == 'rename':
+            return endpoint('/api/playlists/{ident}', 'PATCH')(created['id'], engine_api.PlaylistNameBody(name='after'))
+        if operation == 'remove':
+            return endpoint('/api/playlists/{ident}/tracks/{sid}', 'DELETE')(created['id'], 'concurrent-initial')
+        return endpoint('/api/playlists/{ident}', 'DELETE')(created['id'])
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(add, created['id'], engine_api.PlaylistTracksBody(track_ids=['concurrent-first']))
+            assert first_read.wait(5)
+            second = pool.submit(second_change)
+            assert second_started.wait(5)
+            # An unprotected second writer can commit while the first holds its old snapshot.
+            second_read.wait(.15)
+            release_first.set()
+            first.result(timeout=5)
+            second.result(timeout=5)
+        saved = library.get('collection', created['id'])
+        if operation == 'delete':
+            assert saved is None
+        else:
+            ids = {track['id'] for track in saved['tracks']}
+            assert 'concurrent-first' in ids
+            if operation == 'add': assert 'concurrent-second' in ids
+            if operation == 'rename': assert saved['name'] == 'after'
+            if operation == 'remove': assert 'concurrent-initial' not in ids
+    finally:
+        release_first.set()
+        library.remove('collection', created['id'])
+
+
 def test_download_record_management_preserves_audio_and_rejects_active_tasks():
     import sqlite3
     client = TestClient(app.app)

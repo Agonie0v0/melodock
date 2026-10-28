@@ -220,6 +220,7 @@ try {
   wav.write("data", 36);
   wav.writeUInt32LE(wav.length - 44, 40);
   const playbackReports = [];
+  const unavailablePlayback = new Set();
   let versionRequests = 0;
   let brokenAudio = false;
   let botConfig = {
@@ -642,7 +643,9 @@ try {
               ? localTrack
               : id === remoteTrack.id
                 ? remoteTrack
-                : track,
+                : savedPlaylists
+                    .flatMap((list) => list.tracks)
+                    .find((item) => item.id === id) || track,
           );
       result = method === "PUT" ? { saved: true } : playlist;
     } else if (p === "/playlist/import") {
@@ -787,11 +790,30 @@ try {
       };
     else if (p.endsWith("/playback") || p.endsWith("/versions")) {
       if (p.endsWith("/versions")) versionRequests++;
+      const saved = savedPlaylists
+        .flatMap((list) => list.tracks)
+        .find((item) => p === `/tracks/${item.id}/playback`);
       result = p.includes("local-fixture")
         ? localTrack
         : p.includes("navidrome-s")
           ? remoteTrack
-          : track;
+          : saved
+            ? {
+                ...saved,
+                qualities: track.qualities,
+                playback: { ...track.playback, url: `/api/stream/${saved.id}` },
+              }
+            : track;
+      if (p.endsWith("/playback") && unavailablePlayback.has(result.id))
+        result = {
+          ...result,
+          playback: {
+            ...result.playback,
+            state: "download_only",
+            url: null,
+            detail: "测试音源暂不可播放",
+          },
+        };
     } else if (
       p.startsWith("/stream/") ||
       p.startsWith("/navidrome/stream/") ||
@@ -2667,6 +2689,130 @@ try {
     page.getByRole("button", { name: "移出歌单 测试曲目", exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: "../output/test-ui-playlist-detail.png" });
+  // Pending songs must resolve on demand, and direct row playback keeps its list
+  // even when no waiting queue exists or the user navigates to another screen.
+  savedPlaylists[0].tracks = [
+    {
+      ...track,
+      qualities: [],
+      playback: { ...track.playback, state: "pending", url: null },
+    },
+    { ...track, id: "playlist-next", title: "续播曲目" },
+  ];
+  const playRequest = (id) =>
+    page.waitForRequest((request) =>
+      request.url().endsWith(`/tracks/${id}/playback`),
+    );
+  const openSavedList = async () => {
+    await page
+      .locator(".sidebar")
+      .getByRole("button", { name: "歌单", exact: true })
+      .click();
+    await page.locator(".saved-playlist").click();
+  };
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    playlist = [];
+    await page.reload();
+    await openSavedList();
+    await Promise.all([
+      playRequest(track.id),
+      page.getByRole("button", { name: "播放全部", exact: true }).click(),
+    ]);
+    assert.deepEqual(
+      playlist.map((item) => item.id),
+      [track.id, "playlist-next"],
+    );
+    await page.waitForFunction(() => !document.querySelector("audio").paused);
+    await Promise.all([
+      playRequest("playlist-next"),
+      page.getByRole("button", { name: "下一首全局曲目", exact: true }).click(),
+    ]);
+    await expect(page.locator(".global-mini-copy strong")).toHaveText(
+      "续播曲目",
+    );
+    await page.waitForFunction(() => !document.querySelector("audio").paused);
+    await Promise.all([
+      playRequest(track.id),
+      page
+        .locator("audio")
+        .evaluate((audio) => audio.dispatchEvent(new Event("ended"))),
+    ]);
+    await page.waitForFunction(() => !document.querySelector("audio").paused);
+    for (const selector of [".playlist-manage", ".global-mini-volume"]) {
+      const details = page.locator(selector);
+      await details.locator(":scope > summary").focus();
+      await page.keyboard.press("Space");
+      await expect(details).toHaveAttribute("open");
+      assert.equal(
+        await page.locator("audio").evaluate((audio) => audio.paused),
+        false,
+      );
+      await page.keyboard.press("Space");
+      await expect(details).not.toHaveAttribute("open");
+    }
+    playlist = [];
+    await page.reload();
+    await openSavedList();
+    await Promise.all([
+      playRequest(track.id),
+      page
+        .getByRole("button", { name: `播放歌名 ${track.title}`, exact: true })
+        .click(),
+    ]);
+    await page.waitForFunction(() => !document.querySelector("audio").paused);
+    await Promise.all([
+      playRequest("playlist-next"),
+      page.getByRole("button", { name: "下一首全局曲目", exact: true }).click(),
+    ]);
+    await page.waitForFunction(() => !document.querySelector("audio").paused);
+    await page
+      .locator(".sidebar")
+      .getByRole("button", { name: "设置", exact: true })
+      .click();
+    await Promise.all([
+      playRequest(track.id),
+      page.getByRole("button", { name: "上一首全局曲目", exact: true }).click(),
+    ]);
+    await expect(page.locator(".global-mini-copy strong")).toHaveText(
+      track.title,
+    );
+    assert.ok(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    );
+  }
+  // A failed entry is attempted once and skipped; an entirely unavailable list
+  // stops after one pass instead of endlessly retrying with repeat enabled.
+  await page.reload();
+  await openSavedList();
+  unavailablePlayback.add(track.id);
+  await Promise.all([
+    playRequest("playlist-next"),
+    page.getByRole("button", { name: "播放全部", exact: true }).click(),
+  ]);
+  await page.waitForFunction(() => !document.querySelector("audio").paused);
+  await expect(page.locator(".global-mini-copy strong")).toHaveText("续播曲目");
+  unavailablePlayback.add("playlist-next");
+  let unavailableAttempts = 0;
+  const countUnavailable = (request) => {
+    if (request.url().endsWith("/playback")) unavailableAttempts++;
+  };
+  page.on("request", countUnavailable);
+  await page.getByRole("button", { name: "播放全部", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "继续全局播放", exact: true }),
+  ).toBeEnabled();
+  await page.waitForTimeout(200);
+  assert.equal(unavailableAttempts, 2);
+  page.off("request", countUnavailable);
+  unavailablePlayback.clear();
+  savedPlaylists[0].tracks = [track];
+  playlist = [track];
+  await page.reload();
+  await openSavedList();
+  await page.setViewportSize({ width: 1920, height: 1080 });
   await expand(".playlist-manage");
   await page.getByRole("button", { name: "重命名", exact: true }).click();
   await page.getByLabel("歌单名称", { exact: true }).fill("晚间歌单");

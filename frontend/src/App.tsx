@@ -206,6 +206,8 @@ export function App() {
     eventSource = useRef<EventSource | null>(null),
     startTime = useRef(0),
     currentRef = useRef<Track | null>(null),
+    playbackQueue = useRef<Track[]>([]),
+    playingFromQueue = useRef(false),
     bufferingRef = useRef(false),
     nextRef = useRef<() => void>(() => {});
   useEffect(() => {
@@ -219,7 +221,9 @@ export function App() {
         event.code === "Space" &&
         !(
           event.target instanceof HTMLElement &&
-          (event.target.closest("input,textarea,select,button,a") ||
+          (event.target.closest(
+            "input,textarea,select,button,a,summary,[role=button]",
+          ) ||
             event.target.isContentEditable)
         )
       ) {
@@ -469,9 +473,17 @@ export function App() {
       browser: navigator.userAgent.slice(0, 300),
     }).catch(() => {});
   }
-  async function play(track: Track) {
+  async function play(
+    track: Track,
+    context: Track[] = [track],
+    fromQueue = false,
+  ) {
+    playbackQueue.current = context;
+    playingFromQueue.current = fromQueue;
     const generation = ++playGeneration.current;
     audio.current?.pause();
+    // load() can discard the queued pause event; keep failed preparation in sync.
+    setPlaying(false);
     audio.current?.removeAttribute("src");
     audio.current?.load();
     currentRef.current = track;
@@ -496,7 +508,7 @@ export function App() {
     let stage: "prepare" | "format" | "play" = "prepare";
     try {
       const prepared = await api<Track>(`/tracks/${track.id}/playback`, "POST");
-      if (generation !== playGeneration.current) return;
+      if (generation !== playGeneration.current) return false;
       setCurrent(prepared);
       setTracks((previous) =>
         previous.map((item) => (item.id === prepared.id ? prepared : item)),
@@ -530,10 +542,11 @@ export function App() {
       element.load();
       stage = "play";
       await element.play();
+      return true;
     } catch (error) {
       if (generation === playGeneration.current) {
         const message = playbackErrorMessage(error);
-        if (!message) return;
+        if (!message) return false;
         reportPlayback(
           track,
           "failed",
@@ -544,8 +557,27 @@ export function App() {
         );
         setNotice(message);
       }
+      return false;
     } finally {
       if (generation === playGeneration.current) setLoadingPlay(false);
+    }
+  }
+  async function playSequence(
+    index: number,
+    list: Track[],
+    fromQueue: boolean,
+    direction = 1,
+  ) {
+    // Try each entry at most once; an unavailable song must not block the queue.
+    for (let attempted = 0; attempted < list.length; attempted++) {
+      const generation = playGeneration.current + 1;
+      if (await play(list[index], list, fromQueue)) return;
+      if (generation !== playGeneration.current) return;
+      index += direction;
+      if (index < 0 || index >= list.length) {
+        if (!repeat) return;
+        index = (index + list.length) % list.length;
+      }
     }
   }
   function seek(seconds: number) {
@@ -561,7 +593,7 @@ export function App() {
     if (!current) return;
     if (audio.current?.paused) {
       if (!audio.current.src) {
-        await play(current);
+        await play(current, playbackQueue.current, playingFromQueue.current);
         return;
       }
       await audio.current.play().catch((error) => {
@@ -578,12 +610,7 @@ export function App() {
     } else audio.current?.pause();
   }
   function step(direction: number) {
-    const local = files.flatMap((file) => (file.track ? [file.track] : []));
-    const list = playlist.some((track) => track.id === current?.id)
-      ? playlist
-      : current?.source === "local"
-        ? local
-        : tracks;
+    const list = playingFromQueue.current ? playlist : playbackQueue.current;
     if (!list.length) return;
     const index = list.findIndex((t) => t.id === current?.id);
     let next = shuffle
@@ -594,7 +621,7 @@ export function App() {
       next = 0;
     }
     if (next < 0) next = list.length - 1;
-    void play(list[next]);
+    void playSequence(next, list, playingFromQueue.current, direction);
   }
   nextRef.current = () => step(1);
   async function favorite(track: Track) {
@@ -882,19 +909,18 @@ export function App() {
     }
   }
   async function playCollection(items: Track[]) {
-    const playable = items.filter((t) => t.playback.state === "ready");
-    if (!playable.length) {
-      setNotice("此歌单暂无可试听曲目，可选择下载。");
+    if (!items.length) {
+      setNotice("此歌单暂无曲目");
       return;
     }
     try {
       await api(
         "/playlist",
         "PUT",
-        playable.map((t) => t.id),
+        items.map((t) => t.id),
       );
-      setPlaylist(playable);
-      await play(playable[0]);
+      setPlaylist(items);
+      await playSequence(0, items, true);
     } catch (error) {
       fail(error);
     }
@@ -1032,6 +1058,9 @@ export function App() {
           for (const file of targets) {
             await api(`/files?path=${encodeURIComponent(file.path)}`, "DELETE");
             if (file.track) {
+              playbackQueue.current = playbackQueue.current.filter(
+                (track) => track.id !== file.track!.id,
+              );
               setPlaylist((previous) =>
                 previous.filter((track) => track.id !== file.track!.id),
               );
@@ -1078,7 +1107,10 @@ export function App() {
             className={`playlist-item ${current?.id === track.id ? "active" : ""}`}
             key={track.id}
           >
-            <button className="playlist-song" onClick={() => void play(track)}>
+            <button
+              className="playlist-song"
+              onClick={() => void play(track, playlist, true)}
+            >
               <Cover track={track} />
               <span>
                 <strong>{track.title}</strong>
@@ -1239,12 +1271,15 @@ export function App() {
                 </td>
                 <td>
                   <div className="track">
-                    <Cover track={track} onPlay={() => void play(track)} />
+                    <Cover
+                      track={track}
+                      onPlay={() => void play(track, display)}
+                    />
                     <div className="song-copy">
                       <SongTitle
                         className="song-name"
                         track={track}
-                        onPlay={() => void play(track)}
+                        onPlay={() => void play(track, display)}
                       />
                       {!!track.episodes && (
                         <button
@@ -1329,7 +1364,7 @@ export function App() {
                     className="row-play"
                     aria-label={`播放 ${track.title}`}
                     title="播放"
-                    onClick={() => void play(track)}
+                    onClick={() => void play(track, display)}
                   >
                     <Play />
                     <span>播放</span>
@@ -1772,7 +1807,7 @@ export function App() {
                             {favorites.slice(0, 6).map((track) => (
                               <button
                                 key={track.id}
-                                onClick={() => void play(track)}
+                                onClick={() => void play(track, favorites)}
                               >
                                 <Cover track={track} large />
                                 <strong>{track.title}</strong>
@@ -2593,26 +2628,15 @@ export function App() {
               refresh={() =>
                 void api<LibraryFile[]>("/files").then(setFiles).catch(fail)
               }
-              play={(track) => void play(track)}
-              playAll={(items) =>
-                void (async () => {
-                  try {
-                    await api(
-                      "/playlist",
-                      "PUT",
-                      items.map((track) => track.id),
-                    );
-                    setPlaylist(items);
-                    await play(items[0]);
-                  } catch (error) {
-                    fail(error);
-                  }
-                })()
-              }
+              play={(track, context) => void play(track, context)}
+              playAll={(items) => void playCollection(items)}
               queue={(items) => void addToPlaylist(items)}
               savePlaylist={openAddToPlaylistModal}
               remove={confirmFileDeletion}
               remoteDeleted={(ids) => {
+                playbackQueue.current = playbackQueue.current.filter(
+                  (track) => !ids.includes(track.id),
+                );
                 setPlaylist((previous) =>
                   previous.filter((track) => !ids.includes(track.id)),
                 );

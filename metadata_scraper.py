@@ -3,16 +3,50 @@ import base64
 import copy
 import hashlib
 import html
+import ipaddress
 import os
 import re
+import socket
 import threading
 import time
 import unicodedata
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
+
+
+class _CoverHTTPSAdapter(requests.adapters.HTTPAdapter):
+    """Keep certificate validation and SNI on the original host when dialing its IP."""
+    def __init__(self, hostname):
+        self.hostname = hostname
+        super().__init__()
+
+    def init_poolmanager(self, *args, **kwargs):
+        super().init_poolmanager(*args, assert_hostname=self.hostname, server_hostname=self.hostname, **kwargs)
+
+    def proxy_manager_for(self, proxy, **kwargs):
+        return super().proxy_manager_for(proxy, assert_hostname=self.hostname, server_hostname=self.hostname, **kwargs)
+
+
+def _public_cover_url(url):
+    parsed = urlsplit(url)
+    if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('封面地址无效')
+    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+    try:
+        addresses = [str(ipaddress.ip_address(parsed.hostname))]
+    except ValueError:
+        addresses = list(dict.fromkeys(item[4][0] for item in socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)))
+    if not addresses or any(not ipaddress.ip_address(address).is_global or ipaddress.ip_address(address).is_multicast for address in addresses):
+        raise ValueError('封面地址必须指向公网')
+    # Dial the validated address directly so a second DNS lookup cannot reach the LAN.
+    destinations = []
+    for address in addresses:
+        host = f'[{address}]' if ':' in address else address
+        destinations.append(urlunsplit(parsed._replace(netloc=f'{host}:{port}', fragment='')))
+    return parsed, destinations
 
 SOURCES = {'netease': 'NeteaseMusicClient', 'qq': 'QQMusicClient', 'migu': 'MiguMusicClient',
            'kugou': 'KugouMusicClient', 'kuwo': 'KuwoMusicClient'}
@@ -439,20 +473,37 @@ class MetadataScraper:
         return result, warnings
 
     def cover(self, url):
-        parsed = urlsplit(url)
-        if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username:
-            raise ValueError('封面地址无效')
         cfg = self.engine_config()
         proxy = cfg.get('proxy_url') if cfg.get('proxy_scope') == 'all' else None
-        with requests.get(url, stream=True, timeout=(5, 15), proxies={'http': proxy, 'https': proxy} if proxy else {},
-                          headers={'User-Agent': 'MeloKeep/3.0'}, allow_redirects=True) as response:
-            response.raise_for_status()
-            chunks, length = [], 0
-            for chunk in response.iter_content(65536):
-                length += len(chunk)
-                if length > 8 * 1024 * 1024:
-                    raise ValueError('封面超过 8 MB')
-                chunks.append(chunk)
+        for _ in range(6):
+            parsed, destinations = _public_cover_url(url)
+            with requests.Session() as session:
+                session.trust_env = False
+                if parsed.scheme == 'https':
+                    session.mount('https://', _CoverHTTPSAdapter(parsed.hostname))
+                for index, destination in enumerate(destinations):
+                    try:
+                        response = session.get(destination, stream=True, timeout=(5, 15),
+                                               proxies={'http': proxy, 'https': proxy} if proxy else {},
+                                               headers={'User-Agent': 'MeloKeep/3.0', 'Host': parsed.netloc}, allow_redirects=False)
+                        break
+                    except (requests.ConnectionError, requests.Timeout):
+                        if index == len(destinations) - 1:
+                            raise
+                with response:
+                    if response.is_redirect:
+                        url = urljoin(url, response.headers['Location'])
+                        continue
+                    response.raise_for_status()
+                    chunks, length = [], 0
+                    for chunk in response.iter_content(65536):
+                        length += len(chunk)
+                        if length > 8 * 1024 * 1024:
+                            raise ValueError('封面超过 8 MB')
+                        chunks.append(chunk)
+                    break
+        else:
+            raise ValueError('封面跳转次数过多')
         data = b''.join(chunks)
         mime = 'image/png' if data.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg' if data.startswith(b'\xff\xd8\xff') else ''
         if not mime:

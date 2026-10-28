@@ -50,7 +50,7 @@ export function NavidromeLibrary({
   deleted,
   openSettings,
 }: {
-  play: (track: Track) => void;
+  play: (track: Track, context?: Track[]) => void;
   queue: (tracks: Track[]) => void;
   savePlaylist?: (tracks: Track[]) => void;
   deleted?: (ids: string[]) => void;
@@ -506,7 +506,7 @@ export function NavidromeLibrary({
                   <button
                     className="primary"
                     disabled={!album.tracks.length}
-                    onClick={() => play(album.tracks[0])}
+                    onClick={() => play(album.tracks[0], album.tracks)}
                   >
                     <Play />
                     播放
@@ -529,9 +529,16 @@ export function NavidromeLibrary({
             <div className="nav-song-cards">
               {shownTracks.map((track) => (
                 <article className="nav-song-card" key={track.id}>
-                  <Cover track={track} large onPlay={() => play(track)} />
+                  <Cover
+                    track={track}
+                    large
+                    onPlay={() => play(track, shownTracks)}
+                  />
                   <strong>
-                    <SongTitle track={track} onPlay={() => play(track)} />
+                    <SongTitle
+                      track={track}
+                      onPlay={() => play(track, shownTracks)}
+                    />
                   </strong>
                   <span>{track.artist || "未知歌手"}</span>
                   <small>
@@ -539,7 +546,7 @@ export function NavidromeLibrary({
                   </small>
                   <SongActions
                     track={track}
-                    play={() => play(track)}
+                    play={() => play(track, shownTracks)}
                     queue={() => queue([track])}
                     savePlaylist={
                       savePlaylist ? () => savePlaylist([track]) : undefined
@@ -577,12 +584,15 @@ export function NavidromeLibrary({
                     <tr key={track.id}>
                       <td className="library-song-cell">
                         <div className="library-song">
-                          <Cover track={track} onPlay={() => play(track)} />
+                          <Cover
+                            track={track}
+                            onPlay={() => play(track, shownTracks)}
+                          />
                           <span>
                             <strong>
                               <SongTitle
                                 track={track}
-                                onPlay={() => play(track)}
+                                onPlay={() => play(track, shownTracks)}
                               />
                             </strong>
                             <small className="mobile-meta-sub">
@@ -599,7 +609,7 @@ export function NavidromeLibrary({
                       <td className="library-action-cell">
                         <SongActions
                           track={track}
-                          play={() => play(track)}
+                          play={() => play(track, shownTracks)}
                           queue={() => queue([track])}
                           savePlaylist={
                             savePlaylist

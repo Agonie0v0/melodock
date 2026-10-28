@@ -393,13 +393,14 @@ class LibraryPipeline:
                 self.put('favorite', old_id, {**track, 'id': old_id})
         def update_tracks(items):
             return [{**track, 'id': item['id']} if isinstance(item, dict) and item.get('id') in old_ids else item for item in items]
-        saved = self.get('playlist', 'main', [])
-        if any(isinstance(t, dict) and t.get('id') in old_ids for t in saved):
-            self.put('playlist', 'main', update_tracks(saved))
-        for collection in self.values('collection'):
-            if any(t.get('id') in old_ids for t in collection.get('tracks', [])):
-                collection['tracks'] = update_tracks(collection['tracks'])
-                self.put('collection', collection['id'], collection)
+        with self.db_lock:
+            saved = self.get('playlist', 'main', [])
+            if any(isinstance(t, dict) and t.get('id') in old_ids for t in saved):
+                self.put('playlist', 'main', update_tracks(saved))
+            for collection in self.values('collection'):
+                if any(t.get('id') in old_ids for t in collection.get('tracks', [])):
+                    collection['tracks'] = update_tracks(collection['tracks'])
+                    self.put('collection', collection['id'], collection)
         legacy_tokens = {row[0] for row in aliases}
         for job in self.values('download'):
             if job.get('file') in legacy_tokens or job.get('file') == result['path']:

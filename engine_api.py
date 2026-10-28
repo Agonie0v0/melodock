@@ -907,6 +907,7 @@ def install(old, root):
         value = get('collection', ident)
         if value is None:
             raise HTTPException(404, '歌单不存在')
+        value['tracks'] = [get('track', item['id'], {}).get('track', item) for item in value['tracks']]
         return value
 
     @router.get('/api/playlists/{ident}')
@@ -915,12 +916,13 @@ def install(old, root):
 
     @router.post('/api/playlists/{ident}/tracks')
     def collection_add_tracks(ident: str, body: PlaylistTracksBody):
-        value = collection_for(ident)
-        existing_ids = {t['id'] for t in value['tracks']}
-        added = [t for t in tracks_for_ids(body.track_ids) if t['id'] not in existing_ids]
-        value['tracks'] = [*value['tracks'], *added][:3000]
-        value['detail'] = f'已向歌单“{value["name"]}”加入 {len(added)} 首曲目，共 {len(value["tracks"])} 首。'
-        put('collection', ident, value)
+        with db_lock:
+            value = collection_for(ident)
+            existing_ids = {t['id'] for t in value['tracks']}
+            added = [t for t in tracks_for_ids(body.track_ids) if t['id'] not in existing_ids]
+            value['tracks'] = [*value['tracks'], *added][:3000]
+            value['detail'] = f'已向歌单“{value["name"]}”加入 {len(added)} 首曲目，共 {len(value["tracks"])} 首。'
+            put('collection', ident, value)
         return value
 
     @router.patch('/api/playlists/{ident}')
@@ -928,23 +930,26 @@ def install(old, root):
         name = body.name.strip()
         if not name:
             raise HTTPException(400, '请输入歌单名称')
-        value = collection_for(ident)
-        value['name'] = name
-        put('collection', ident, value)
+        with db_lock:
+            value = collection_for(ident)
+            value['name'] = name
+            put('collection', ident, value)
         return value
 
     @router.delete('/api/playlists/{ident}')
     def collection_delete(ident: str):
-        collection_for(ident)
-        remove('collection', ident)
+        with db_lock:
+            collection_for(ident)
+            remove('collection', ident)
         # Shared track records and audio files belong to other library views too.
         return {'deleted': True}
 
     @router.delete('/api/playlists/{ident}/tracks/{sid}')
     def collection_remove_track(ident: str, sid: str):
-        value = collection_for(ident)
-        value['tracks'] = [t for t in value['tracks'] if t['id'] != sid]
-        put('collection', ident, value)
+        with db_lock:
+            value = collection_for(ident)
+            value['tracks'] = [t for t in value['tracks'] if t['id'] != sid]
+            put('collection', ident, value)
         return value
 
     def file_token(path):
@@ -1314,12 +1319,13 @@ def install(old, root):
         for ident in local_ids - {None}:
             remove('track', ident)
             remove('favorite', ident)
-        saved = get('playlist', 'main', [])
-        if any(isinstance(t, dict) and t.get('id') in local_ids for t in saved):
-            put('playlist', 'main', [t for t in saved if not isinstance(t, dict) or t.get('id') not in local_ids])
-        for collection in values('collection'):
-            collection['tracks'] = [t for t in collection.get('tracks', []) if t.get('id') not in local_ids]
-            put('collection', collection['id'], collection)
+        with db_lock:
+            saved = get('playlist', 'main', [])
+            if any(isinstance(t, dict) and t.get('id') in local_ids for t in saved):
+                put('playlist', 'main', [t for t in saved if not isinstance(t, dict) or t.get('id') not in local_ids])
+            for collection in values('collection'):
+                collection['tracks'] = [t for t in collection.get('tracks', []) if t.get('id') not in local_ids]
+                put('collection', collection['id'], collection)
         old.pushlog('info', f'已删除音乐文件：{target.name}', category='download')
         return {'deleted': True, 'track_ids': sorted(local_ids - {None})}
 

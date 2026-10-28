@@ -41,7 +41,7 @@ export function MusicLibrary({
   busy: boolean;
   error: string;
   refresh: () => void;
-  play: (track: Track) => void;
+  play: (track: Track, context?: Track[]) => void;
   playAll: (tracks: Track[]) => void;
   queue: (tracks: Track[]) => void;
   savePlaylist?: (tracks: Track[]) => void;
@@ -372,7 +372,9 @@ export function MusicLibrary({
                         <Cover
                           track={file.track}
                           onPlay={
-                            file.track ? () => play(file.track!) : undefined
+                            file.track
+                              ? () => play(file.track!, playable)
+                              : undefined
                           }
                         />
                         <span>
@@ -380,7 +382,7 @@ export function MusicLibrary({
                             {file.track ? (
                               <SongTitle
                                 track={file.track}
-                                onPlay={() => play(file.track!)}
+                                onPlay={() => play(file.track!, playable)}
                               />
                             ) : (
                               file.name
@@ -415,7 +417,7 @@ export function MusicLibrary({
                       {file.track ? (
                         <SongActions
                           track={file.track}
-                          play={() => play(file.track!)}
+                          play={() => play(file.track!, playable)}
                           queue={() => queue([file.track!])}
                           savePlaylist={
                             savePlaylist
