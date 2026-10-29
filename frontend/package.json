@@ -9,6 +9,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.test.mjs",
     "test:browser": "node tests/browser.mjs",
+    "test:browser:ai": "node tests/ai-browser.mjs",
     "format:check": "prettier --check src tests"
   },
   "dependencies": {

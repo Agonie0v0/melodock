@@ -6,6 +6,7 @@ import {
   Folder,
   ListMusic,
   Music2,
+  MessageSquare,
   Search,
   Settings,
   ScrollText,
@@ -15,6 +16,7 @@ import {
 
 const items = [
   ["search", "搜索音乐", Search],
+  ["assistant", "AI 助手", MessageSquare],
   ["player", "正在播放", Music2],
   ["playlists", "歌单", ListMusic],
   ["queue", "下载队列", Download],

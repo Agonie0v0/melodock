@@ -1,6 +1,7 @@
 import { Cover, Button, Lyrics, Modal, SongTitle } from "./components";
 import { SettingsWorkspace, type SettingsTab } from "./SettingsWorkspace";
 import { Navigation } from "./Navigation";
+import { AIAssistant } from "./AIAssistant";
 import { ThemePicker } from "./ThemePicker";
 import { RuntimeLogs } from "./RuntimeLogs";
 import { LibraryWorkspace } from "./LibraryWorkspace";
@@ -60,6 +61,7 @@ const defaultSources = [
 ];
 const views = {
   search: ["搜索音乐", "歌曲、歌手、专辑与不同音质版本"],
+  assistant: ["AI 助手", "通过对话和图片搜索音乐、管理歌单与下载入库"],
   player: ["正在播放", "歌词与播放列表"],
   import: ["歌单导入", "导入后独立保存到我的歌单"],
   playlists: ["歌单", "管理自建歌单、收藏歌曲与平台歌单导入"],
@@ -2801,6 +2803,13 @@ export function App() {
             />
           )}
           {view === "logs" && <RuntimeLogs active={!loginRequired} />}
+          {view === "assistant" && !loginRequired && (
+            <AIAssistant
+              openSettings={() => openSettings("ai")}
+              changed={load}
+              navigate={setView}
+            />
+          )}
           {current &&
             view !== "search" &&
             view !== "favorites" &&

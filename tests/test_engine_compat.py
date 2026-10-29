@@ -871,6 +871,35 @@ def test_search_size_uses_original_metadata_without_network_requests():
     assert remember(song)['size_label'] is None
 
 
+def test_agent_uses_real_search_and_playlist_services_and_existing_auth(monkeypatch):
+    service = app.app.state.ai_agent
+    state = app.app.state.engine_test
+    song = fixture_song()
+    song.identifier = 'agent-search-and-playlist'
+    monkeypatch.setitem(app.original.manager.config, 'music_sources', [song.source])
+    async def search(*args, **kwargs):
+        return [song]
+    monkeypatch.setattr(state['coordinator'], 'run', search)
+    found = asyncio.run(service.invoke('search_music', {'keyword': 'Generated integration audio'}))
+    track = found['tracks'][0]
+    created = asyncio.run(service.invoke('create_playlist', {'name': 'AI integration'}))
+    try:
+        args = {'playlist_id': created['id'], 'track_ids': [track['id']]}
+        added = asyncio.run(service.invoke('add_to_playlist', args))
+        again = asyncio.run(service.invoke('add_to_playlist', args))
+        assert added['total'] == again['total'] == 1
+        actual = TestClient(app.app).get(f"/api/playlists/{created['id']}").json()
+        assert actual['tracks'][0]['id'] == track['id']
+        assert actual['name'] == 'AI integration'
+        client = TestClient(app.app)
+        assert client.post('/api/agent/sessions').status_code == 403
+        monkeypatch.setattr(app.original, 'AUTH_ENABLED', True)
+        assert client.get('/api/agent/settings').status_code == 401
+        assert client.post('/api/agent/sessions', headers=HEADERS).status_code == 401
+    finally:
+        state['library'].remove('collection', created['id'])
+
+
 @pytest.mark.parametrize('layout,per_source', [('source', False), ('flat', False),
                                             ('artist', False), ('artist_album', False), ('source', True)])
 def test_exact_song_info_persists_and_original_downloader_saves_audio(monkeypatch, layout, per_source):
@@ -920,7 +949,8 @@ def test_exact_song_info_persists_and_original_downloader_saves_audio(monkeypatc
                'Start to download music files' in entry['message'] for entry in logs)
 
 
-def test_download_automatically_scrapes_organizes_and_retains_signed_link(monkeypatch):
+@pytest.mark.parametrize('via_agent', [False, True])
+def test_download_automatically_scrapes_organizes_and_retains_signed_link(monkeypatch, via_agent):
     from bot_notifications import DownloadLinks
     client = TestClient(app.app)
     state = app.app.state.engine_test
@@ -931,14 +961,19 @@ def test_download_automatically_scrapes_organizes_and_retains_signed_link(monkey
     cfg['global_client_cfg']['work_dir'] = str(_root / 'music' / 'automatic')
     monkeypatch.setattr(app.original.manager, 'config', cfg)
     song = fixture_song()
-    song.identifier = 'automatic-pipeline-integration'
+    song.identifier = f'automatic-pipeline-integration-{via_agent}'
     song.lyric = '[00:00]自动整理歌词'
     track = state['remember'](song)
     try:
-        saved = client.put('/api/library/settings', headers=HEADERS, json={**previous, 'auto_scrape': True, 'auto_organize': True})
+        saved = client.put('/api/library/settings', headers=HEADERS, json={**previous, 'auto_scrape': not via_agent, 'auto_organize': not via_agent})
         assert saved.status_code == 200
-        result = client.post('/api/downloads', headers=HEADERS, json=[{'track_id': track['id'], 'quality_id': track['qualities'][0]['id']}])
-        ident = result.json()[0]['id']
+        if via_agent:
+            result = asyncio.run(app.app.state.ai_agent.invoke('download_music', {'track_ids': [track['id']], 'organize': True}))
+            ident = result['downloads'][0]['id']
+            assert pipeline.settings()['auto_organize'] is False
+        else:
+            result = client.post('/api/downloads', headers=HEADERS, json=[{'track_id': track['id'], 'quality_id': track['qualities'][0]['id']}])
+            ident = result.json()[0]['id']
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             job = pipeline.get('download', ident)
@@ -948,6 +983,11 @@ def test_download_automatically_scrapes_organizes_and_retains_signed_link(monkey
         assert job['status'] == 'complete' and job['processing']['status'] == 'complete', job
         path = pipeline.resolve(job['file'])
         assert path.is_relative_to(pipeline.library_root()) and path.is_file()
+        if via_agent:
+            duplicate = asyncio.run(app.app.state.ai_agent.invoke('download_music', {'track_ids': [track['id']], 'organize': True}))
+            assert duplicate['downloads'][0]['status'] == 'exists'
+            found = asyncio.run(app.app.state.ai_agent.invoke('browse_library', {'keyword': 'Generated integration audio'}))
+            assert any(item['path'] == job['file'] for item in found['files'])
         assert path.with_suffix('.lrc').read_text(encoding='utf-8').strip() == '[00:00]自动整理歌词'
         with wave.open(str(path)) as audio:
             assert audio.readframes(8000) == b'\0\0' * 8000

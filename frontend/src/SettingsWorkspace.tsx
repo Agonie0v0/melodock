@@ -1,5 +1,12 @@
 import type { ComponentProps } from "react";
-import { Bell, Download, Library, WandSparkles } from "lucide-react";
+import {
+  Bell,
+  Download,
+  Library,
+  WandSparkles,
+  MessageSquare,
+} from "lucide-react";
+import { AISettings } from "./AISettings";
 import { EngineSettings } from "./EngineSettings";
 import { LibrarySettings } from "./LibrarySettings";
 import { BotSettings } from "./BotSettings";
@@ -10,6 +17,7 @@ const tabs = [
   ["library", "刮削与归档", WandSparkles],
   ["navidrome", "Navidrome 连接", Library],
   ["bots", "通知与机器人", Bell],
+  ["ai", "AI 助手", MessageSquare],
 ] as const;
 export type SettingsTab = (typeof tabs)[number][0];
 
@@ -45,6 +53,7 @@ export function SettingsWorkspace({
           />
         )}
         {tab === "bots" && <BotSettings />}
+        {tab === "ai" && <AISettings />}
       </section>
     </>
   );

@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: '3.14'
       - run: python install_dependencies.py pytest httpx imageio-ffmpeg
-      - run: python -m pytest tests/test_public_http.py tests/test_install_dependencies.py -q
+      - run: python -m pytest tests/test_public_http.py tests/test_install_dependencies.py tests/test_ai_agent.py -q
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
@@ -22,7 +22,7 @@ jobs:
       - run: npm run build --prefix frontend
       - run: python -m pytest tests/test_engine_compat.py tests/test_resumable_download.py tests/test_search_runtime.py -q
       - run: python -m pytest tests/test_library_pipeline.py tests/test_library_tools.py tests/test_metadata_scraper.py tests/test_navidrome_browsing.py -q
-      - run: python -m pytest tests/test_bot_notifications.py tests/test_bot_files_sources.py tests/test_error_messages.py -q
+      - run: python -m pytest tests/test_bot_notifications.py tests/test_bot_files_sources.py tests/test_bot_ai.py tests/test_bot_channels.py tests/test_error_messages.py -q
       - run: python -m pytest legacy/tests/test_app.py -q
       - run: python -m pytest tests/test_launcher.py tests/test_docker_entrypoint.py tests/test_runtime_config.py -q
   frontend:
@@ -41,3 +41,4 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+      - run: npm run test:browser:ai

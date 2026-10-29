@@ -11,9 +11,10 @@ import secrets
 import struct
 import time
 import unicodedata
+from pathlib import Path
 from difflib import SequenceMatcher
 import xml.etree.ElementTree as ET
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder
@@ -22,13 +23,17 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from error_messages import explain_error
 from telegram_local import LocalBotAPI, LOCAL_URL
+import bot_channels
 
 
 HELP = ('MeloKeep · 功能菜单\n\n'
         '搜索音乐\n直接发送歌名或歌手，例如：稻香 周杰伦\n也可发送 /search 稻香 周杰伦\n\n'
-        '试听与下载\n切换音源查看结果，点击编号下载。完成后收到音频或原文件；超限时提供下载链接。\n\n'
+        '试听与下载\n切换音源查看结果，Telegram 可点击编号，其他渠道发送“下载 1”。完成后收到音频、原文件或下载链接。\n\n'
         '我的任务\n/status 查看进度，并通过按钮继续、取消或获取下载链接。\n\n'
         '翻页：下一页 / 上一页 / 第2页。下载：下载 1。\n\n'
+        'AI 助手（需在网页通知设置中启用）\n直接发送需求或歌单图片，或 /ai 你的需求。\n'
+        '/ai_new 新对话 · /ai_stop 停止本轮 · /ai_status 执行状态\n'
+        '/ai_readonly 仅查询 · /ai_write 允许操作（受网页权限开关限制）\n\n'
         '/menu 随时打开功能菜单。Telegram 仅支持白名单用户私聊；企业微信留空白名单时允许应用可见成员。')
 ALIASES = {'搜索': 'search', '下载': 'download', '状态': 'status', '取消': 'cancel',
            '继续': 'resume', '链接': 'link', '帮助': 'help', '菜单': 'help', 'menu': 'help', 'start': 'help',
@@ -36,22 +41,27 @@ ALIASES = {'搜索': 'search', '下载': 'download', '状态': 'status', '取消
 TG_COMMANDS = [{'command': key, 'description': value} for key, value in (
     ('start', '打开功能菜单'), ('menu', '功能菜单'), ('search', '搜索音乐：/search 歌名 歌手'),
     ('status', '我的任务与下载进度'), ('download', '下载指定搜索结果'),
-    ('link', '获取任务下载链接'), ('file', '重新发送已完成文件'), ('cancel', '取消下载任务'), ('resume', '继续下载任务'), ('help', '使用帮助'))]
+    ('link', '获取任务下载链接'), ('file', '重新发送已完成文件'), ('cancel', '取消下载任务'), ('resume', '继续下载任务'),
+    ('ai', 'AI 对话：/ai 你的需求'), ('ai_new', '开始新的 AI 对话'), ('ai_stop', '停止 AI 本轮执行'),
+    ('ai_status', '查看 AI 执行状态'), ('ai_readonly', 'AI 仅查询模式'), ('ai_write', 'AI 允许操作模式'), ('help', '使用帮助'))]
 STATUS_LABELS = {'queued': '排队中', 'resolving': '解析中', 'downloading': '下载中', 'enriching': '整理文件中',
                  'complete': '下载完成', 'failed': '下载失败', 'paused': '已暂停', 'cancelled': '已取消'}
 SOURCE_LABELS = {'migu': '咪咕', 'netease': '网易云', 'qq': 'QQ音乐', 'kuwo': '酷我', 'qianqian': '千千',
                  'KugouMusicClient': '酷狗', 'MiguMusicClient': '咪咕', 'NeteaseMusicClient': '网易云',
                  'QQMusicClient': 'QQ音乐', 'KuwoMusicClient': '酷我', 'QianqianMusicClient': '千千'}
 CONFIG_DEFAULTS = {'public_url': '', 'link_ttl_seconds': 86400, 'bot_sources': '',
+                   'tg_ai_enabled': False, 'wecom_ai_enabled': False, 'bot_ai_allow_actions': True,
                    'tg_token': '', 'tg_allowed_users': '', 'tg_proxy': '', 'tg_api_url': 'https://api.telegram.org',
                    'tg_local_enabled': False, 'tg_local_api_id': '', 'tg_local_api_hash': '',
                    'wecom_corp_id': '', 'wecom_agent_id': '', 'wecom_secret': '',
                    'wecom_token': '', 'wecom_aes_key': '', 'wecom_allowed_users': '',
                    'discord_webhook': '', 'feishu_webhook': '', 'feishu_sign_secret': '',
                    'dingtalk_webhook': '', 'dingtalk_sign_secret': ''}
+CONFIG_DEFAULTS.update(bot_channels.DEFAULTS)
 WEBHOOK_CHANNELS = ('discord', 'feishu', 'dingtalk')
 SECRET_FIELDS = {'tg_token', 'tg_proxy', 'tg_local_api_hash', 'wecom_secret', 'wecom_token', 'wecom_aes_key',
                  *(channel + '_webhook' for channel in WEBHOOK_CHANNELS), 'feishu_sign_secret', 'dingtalk_sign_secret'}
+SECRET_FIELDS.update(bot_channels.SECRETS)
 
 
 def public_origin(value):
@@ -231,16 +241,20 @@ class DownloadLinks:
 
 
 class BotService:
-    def __init__(self, get, put, values, remove, search, enqueue, control, resolve, log, config=None, project_proxy=None, test_channel=None, source_catalog=None, search_progress=None, local_api=None):
+    def __init__(self, get, put, values, remove, search, enqueue, control, resolve, log, config=None, project_proxy=None, test_channel=None, source_catalog=None, search_progress=None, local_api=None, ai_agent=None):
         self.get, self.put, self.values, self.remove = get, put, values, remove
         self.search, self.enqueue, self.control, self.log = search, enqueue, control, log
         self.search_progress = search_progress
         self.resolve, self.source_catalog = resolve, source_catalog
+        self.ai_agent = ai_agent
         self.config = {key: os.environ.get('MELOKEEP_' + key.upper(), default) for key, default in CONFIG_DEFAULTS.items()}
         self.config.update(get('bot_setting', 'config', {}) if config is None else config)
         cfg = self.config
         self.local_api = local_api or LocalBotAPI(log)
         cfg['tg_local_enabled'] = str(cfg['tg_local_enabled']).lower() in {'true', '1'}
+        for key in ('tg_ai_enabled', 'wecom_ai_enabled', 'bot_ai_allow_actions',
+                    *(c + suffix for c in WEBHOOK_CHANNELS for suffix in ('_bot_enabled', '_ai_enabled'))):
+            cfg[key] = str(cfg[key]).lower() in {'true', '1'}
         self.project_proxy = project_proxy or (lambda: '')
         cfg.setdefault('tg_proxy_mode', 'custom' if cfg['tg_proxy'] else 'direct')
         if cfg['tg_proxy_mode'] not in {'direct', 'project', 'custom'}:
@@ -273,7 +287,8 @@ class BotService:
         self.secret = cfg['wecom_secret'].strip() if cfg['wecom_enabled'] else ''
         self.wecom_users = {x.strip() for x in cfg['wecom_allowed_users'].split(',') if x.strip()}
         self.crypt = None
-        self.enabled = bool(cfg['tg_enabled'] or cfg['wecom_enabled'] or any(cfg[c + '_enabled'] for c in WEBHOOK_CHANNELS))
+        self.enabled = bool(cfg['tg_enabled'] or cfg['wecom_enabled'] or any(
+            cfg[c + '_enabled'] or cfg[c + '_bot_enabled'] for c in WEBHOOK_CHANNELS))
         base = ''
         if not test_channel and cfg['public_url'].strip():
             base = public_origin(cfg['public_url'])
@@ -319,6 +334,7 @@ class BotService:
         self.file_send, self.file_item = None, None
         self.pending = asyncio.Queue(maxsize=100)
         self.seen_rate = {}
+        self.channels = bot_channels.ChannelBots(self, test_channel=test_channel)
 
     def telegram_proxy(self):
         mode = self.config['tg_proxy_mode']
@@ -329,7 +345,9 @@ class BotService:
         if channel == 'tg':
             return bool(self.tg_token) and user in self.tg_users
         if channel in WEBHOOK_CHANNELS:
-            return bool(self.config[channel + '_enabled']) and user == 'downloads'
+            if user == 'downloads':
+                return bool(self.config[channel + '_enabled'])
+            return self.channels.allowed(channel, user)
         return channel == 'wecom' and bool(self.crypt) and bool(user) and (not self.wecom_users or user in self.wecom_users)
 
     def public_config(self):
@@ -384,6 +402,8 @@ class BotService:
 
     def menu_buttons(self):
         buttons = [[{'text': '搜索音乐', 'callback_data': '/search'}, {'text': '我的任务', 'callback_data': '/status'}]]
+        if self.config['tg_ai_enabled'] or self.config['wecom_ai_enabled']:
+            buttons.append([{'text': 'AI 助手', 'callback_data': '/ai'}, {'text': 'AI 状态', 'callback_data': '/ai_status'}])
         if self.links:
             buttons.append([{'text': '打开网页试听', 'url': self.links.base_url}])
         buttons.append([{'text': '使用帮助', 'callback_data': '/help'}])
@@ -421,9 +441,11 @@ class BotService:
                 lines.extend([f'{index}. {concise(track["title"])}',
                               f'{concise(track["artist"], 24)} · {concise(source, 16)}',
                               f'{concise(track["qualities"][0]["label"], 20)} · {track_size(track)}', ''])
-        if message['channel'] == 'wecom':
+        if message['channel'] != 'tg':
             lines.append(f'先打开网页试听确认版本。下载示例：下载 {start + 1}')
-        if message['channel'] == 'wecom' and pages > 1:
+            if message['channel'] in WEBHOOK_CHANNELS and self.links:
+                lines.append('网页试听：' + self.links.base_url)
+        if message['channel'] != 'tg' and pages > 1:
             lines.append('翻页：下一页 / 上一页 / 第2页（30 分钟内有效）')
         if result.get('partial'):
             lines.append('部分音源失败或超时，以上为已返回结果。')
@@ -468,7 +490,7 @@ class BotService:
                 title = f'{index}. {concise(track["title"], 48)} {concise(track.get("artist"), 24)}'
                 details = f'{concise(track["qualities"][0]["label"], 20)} · {track_size(track)}'
                 lines.append(title + ' · ' + details if message['channel'] == 'tg' else title)
-                if message['channel'] == 'wecom':
+                if message['channel'] != 'tg':
                     lines.append(details)
             if source['state'] == 'failed':
                 lines.append('该音源部分结果已返回，其余失败或超时。')
@@ -484,9 +506,11 @@ class BotService:
         buttons.extend(button_rows([{'text': ('✓ ' if i == selected else '') + concise(s['label'], 18),
                                      'callback_data': f'/source {search_id} {i}'} for i, s in enumerate(result['source_states'])], 4))
         buttons.append([{'text': '我的任务', 'callback_data': '/status'}, {'text': '功能菜单', 'callback_data': '/menu'}])
-        if message['channel'] == 'wecom':
+        if message['channel'] != 'tg':
             lines.append('\n切换音源：音源 序号，例如 音源 2。下载：下载 1。翻页：下一页 / 上一页。')
             lines.extend(f'{i + 1}. {s["label"]}' for i, s in enumerate(result['source_states']))
+            if message['channel'] in WEBHOOK_CHANNELS and self.links:
+                lines.append('网页试听：' + self.links.base_url)
         self.reply(message, '\n'.join(lines), buttons=buttons, card_key=result['id'] if message['channel'] == 'tg' else None)
         owner = f'{message["channel"]}:{message["user"]}'
         self.put('bot_session', owner, {'id': owner, 'search_id': search_id, 'page': page, 'expires': result['expires']})
@@ -556,7 +580,12 @@ class BotService:
             raise HTTPException(400, '没有有效搜索结果，请先发送歌名重新搜索')
         return session, result
 
-    def accept(self, channel, user, message_id, text, reply_message_id=None):
+    def accept(self, channel, user, message_id, text, reply_message_id=None, image=None):
+        if (not isinstance(user, str) or not user or not isinstance(message_id, str) or not message_id
+                or not isinstance(text, str)):
+            raise HTTPException(400, '消息身份或内容无效')
+        if channel in WEBHOOK_CHANNELS and user == 'downloads':
+            return False  # Reserved for outgoing download notifications, never a command sender.
         if not self.allowed(channel, user):
             return False
         ident = hashlib.sha256(f'{channel}:{user}:{message_id}'.encode()).hexdigest()
@@ -567,24 +596,178 @@ class BotService:
         if self.pending.full() or now - last < 1:
             raise HTTPException(429, '命令过于频繁，请稍后重试')
         self.seen_rate[key] = now
-        message = {'id': ident, 'channel': channel, 'user': user, 'text': text[:500],
+        if len(text) > 8000:
+            raise HTTPException(400, '消息不能超过 8000 字符，请分批发送')
+        message = {'id': ident, 'channel': channel, 'user': user, 'text': text,
                    'done': False, 'created': int(now)}
         if reply_message_id:
             message['reply_message_id'] = reply_message_id
+        if image:
+            message['image'] = image  # Store only the platform media ID; fetch bytes in memory on use.
         self.put('bot_inbox', ident, message)
         self.pending.put_nowait(message)
         return True
 
+    def agent_session(self, owner, create=False):
+        binding = self.get('bot_ai_session', owner)
+        if binding and not self.get('agent_session', binding['session_id']):
+            binding = None
+        if not binding and create:
+            session = self.ai_agent.create_session()
+            binding = {'id': owner, 'session_id': session['id'], 'readonly': False}
+            self.put('bot_ai_session', owner, binding)
+        return binding
+
+    async def agent_command(self, message, command, text):
+        if not self.allowed(message['channel'], message['user']):
+            raise HTTPException(403, '该用户无机器人使用权限')
+        if not self.ai_agent:
+            raise HTTPException(400, 'AI 助手服务不可用，请检查服务版本')
+        owner = f'{message["channel"]}:{message["user"]}'
+        binding = self.agent_session(owner)
+        if command in {'ai_stop', 'ai_status'}:
+            if not binding:
+                self.reply(message, '还没有 AI 对话，发送 /ai 你的需求开始。')
+                return
+            session = self.ai_agent.stop_turn(binding['session_id']) if command == 'ai_stop' else self.ai_agent.session(binding['session_id'])
+            self.reply(message, f'AI 助手\n{session["detail"] or "等待输入需求"}\n\n/ai_new 新对话 · /ai_stop 停止本轮')
+            return
+        if not self.config.get(message['channel'] + '_ai_enabled'):
+            raise HTTPException(400, '请先在网页「设置 → 通知与机器人」启用此渠道的 AI 对话')
+        if command == 'ai_new':
+            if binding and binding['session_id'] in self.ai_agent.running:
+                raise HTTPException(409, '请先发送 /ai_stop，等待当前操作结束后再新建对话')
+            # Preserve the previous transcript in the web UI.
+            session = self.ai_agent.create_session()
+            self.put('bot_ai_session', owner, {'id': owner, 'session_id': session['id'], 'readonly': (binding or {}).get('readonly', False)})
+            self.reply(message, '已新建 AI 对话。直接发送需求或图片即可；/search 仍使用原搜索方式。')
+            return
+        if command in {'ai_readonly', 'ai_write'}:
+            binding = self.agent_session(owner, create=True)
+            binding['readonly'] = command == 'ai_readonly'
+            self.put('bot_ai_session', owner, binding)
+            self.reply(message, '已切换为仅查询模式，之后的消息不会修改歌单或下载。' if binding['readonly'] else
+                       '已切换为允许操作模式；是否能写入仍受网页「允许渠道 AI 执行操作」开关限制。')
+            return
+        if command != 'ai':
+            raise HTTPException(400, '未知 AI 命令，可使用 /ai、/ai_new、/ai_stop、/ai_status')
+        if not text.strip() and not message.get('image'):
+            self.reply(message, 'AI 助手\n直接发送需求或歌单图片，例如：\n/ai 搜索晴天，下载后整理入库\n\n/ai_new 新对话 · /ai_stop 停止本轮\n/ai_readonly 仅查询 · /ai_write 允许操作')
+            return
+        # Inbox replays can deliver a saved result, but must not execute the request twice.
+        if self.get('bot_ai_turn', message['id']):
+            return
+        binding = self.agent_session(owner, create=True)
+        ident = binding['session_id']
+        if ident in self.ai_agent.running:
+            raise HTTPException(409, 'AI 正在处理上一条消息，请等待结果，或发送 /ai_stop 停止')
+        from ai_agent import Turn
+        image = await asyncio.to_thread(self.agent_image, message) if message.get('image') else None
+        body = Turn(message=text, image=image, allow_actions=self.config['bot_ai_allow_actions'] and not binding['readonly'])
+        session = self.ai_agent.session(ident)
+        record = {'id': message['id'], 'owner': owner, 'channel': message['channel'], 'user': message['user'],
+                  'session_id': ident, 'message_start': len(session['messages']),
+                  'created': int(time.time()), 'notified': False}
+        self.ai_agent.start_turn(ident, body, request_id=message['id'])
+        self.put('bot_ai_turn', message['id'], record)
+        self.reply(message, '已收到，AI 正在处理。\n/ai_status 查看进度 · /ai_stop 停止本轮' +
+                   ('\n本轮为仅查询模式。' if not body.allow_actions else ''))
+
+    def agent_image(self, message):
+        if message['channel'] in WEBHOOK_CHANNELS:
+            return self.channels.image(message)
+        media = message['image']
+        maximum = 5 * 1024 * 1024
+        if media.get('size', 0) > maximum:
+            raise HTTPException(400, '图片超过 5 MB，请压缩后重新发送')
+        if message['channel'] == 'tg':
+            info = self.telegram('getFile', {'file_id': media['id']})
+            path = info.get('file_path', '')
+            if not path or info.get('file_size', 0) > maximum:
+                raise HTTPException(400, '图片不可用或超过 5 MB，请重新发送')
+            if self.config['tg_local_enabled'] and Path(path).is_absolute():
+                root = (Path(os.environ.get('MELOKEEP_DATA_DIR', Path(__file__).resolve().parent / 'data')) / 'telegram-bot-api').resolve()
+                target = Path(path).resolve()
+                if not target.is_relative_to(root) or not target.is_file():
+                    raise HTTPException(400, 'Telegram 图片不在内置服务缓存目录中')
+                with target.open('rb') as handle:
+                    data = handle.read(maximum + 1)
+                return self.image_data(data)
+            if Path(path).is_absolute() or '\\' in path or any(part in {'.', '..'} for part in path.split('/')):
+                raise HTTPException(400, 'Telegram 图片路径无效；自建本地服务请使用可下载的相对文件路径')
+            origin = self.telegram_url()
+            proxy = None if origin == LOCAL_URL else self.telegram_proxy() or None
+            response = self.tg_http.get(f'{origin}/file/bot{self.tg_token}/{quote(path, safe="/")}',
+                                        timeout=(10, 30), stream=True, allow_redirects=False,
+                                        proxies={'http': proxy, 'https': proxy})
+        else:
+            response = self.wecom_http.get('https://qyapi.weixin.qq.com/cgi-bin/media/get',
+                params={'access_token': self.wecom_access(), 'media_id': media['id']},
+                timeout=(10, 30), stream=True, allow_redirects=False)
+        with response:
+            if response.status_code != 200:
+                raise HTTPException(502, '无法获取机器人图片，请重新发送或检查渠道配置')
+            data = bytearray()
+            for chunk in response.iter_content(65536):
+                data.extend(chunk)
+                if len(data) > maximum:
+                    raise HTTPException(400, '图片超过 5 MB，请压缩后重新发送')
+        return self.image_data(data)
+
+    @staticmethod
+    def image_data(data):
+        from ai_agent import Turn
+        mime = ('image/png' if data.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg' if data.startswith(b'\xff\xd8\xff') else
+                'image/webp' if data.startswith(b'RIFF') and data[8:12] == b'WEBP' else '')
+        if not mime:
+            raise HTTPException(400, '图片读取失败或格式不支持，请发送 PNG、JPEG 或 WebP 图片')
+        try:
+            return Turn(image=f'data:{mime};base64,' + base64.b64encode(data).decode()).image
+        except ValueError:
+            raise HTTPException(400, '图片格式无效或超过 5 MB') from None
+
+    def queue_agent_notifications(self):
+        for turn in self.values('bot_ai_turn'):
+            if turn['notified'] or not self.allowed(turn['channel'], turn['user']):
+                continue
+            result = self.get('agent_result', turn['id'])
+            session = self.get('agent_session', turn['session_id'])
+            if result and result['status'] == 'running':
+                result = None
+            if not result and session and session.get('request_id') == turn['id'] and session['status'] in {'running', 'stopping'}:
+                continue
+            for job in (result or {}).get('downloads', []):
+                if job.get('created') and job.get('id') and not self.get('bot_task', job['id']):
+                    self.put('bot_task', job['id'], {k: turn[k] for k in ('owner', 'channel', 'user')} |
+                             {'id': job['id'], 'notified': None})
+            replies = list((result or {}).get('replies', []))
+            detail = (result or {}).get('detail') or '本轮已中断或对话已删除，请先到网页核对执行记录，再重新发送需求'
+            if not result or result['status'] != 'complete' or not replies:
+                replies.append(detail or '本轮未执行，请重新发送需求')
+            self.reply(turn, 'AI 助手\n\n' + '\n\n'.join(replies) + '\n\n/ai_new 新对话 · /ai_status 执行状态')
+            turn['notified'] = True
+            self.put('bot_ai_turn', turn['id'], turn)
+
     async def command(self, message):
         text = message['text'].strip()
-        command, _, arg = text.partition(' ')
-        command = ALIASES.get(command.lstrip('/').split('@')[0].lower(), command.lstrip('/').lower())
+        parts = text.split(maxsplit=1)
+        command, arg = (parts[0] if parts else ''), (parts[1] if len(parts) > 1 else '')
+        command = command.lstrip('/').split('@')[0].lower()
+        command = ALIASES.get(command, command)
         if command == '音源':
             command = 'source'
         if match := re.fullmatch(r'第\s*([0-9]+)\s*页', text):
             command, arg = 'results', match[1]
         if command == '结果':
             command = 'results'
+        if command == 'ai' or command.startswith('ai_'):
+            return await self.agent_command(message, command, arg)
+        legacy_commands = {'help', 'search', 'download', 'status', 'link', 'file', 'source', 'cancel', 'resume', 'results', 'next', 'prev'}
+        if message.get('image') or text and not text.startswith('/') and command not in legacy_commands:
+            settings = self.ai_agent.settings() if self.ai_agent else {}
+            ready = settings.get('enabled') and settings.get('base_url') and settings.get('model')
+            if (self.config.get(message['channel'] + '_ai_enabled') and ready) or message.get('image'):
+                return await self.agent_command(message, 'ai', text)
         if text and not text.startswith('/') and command not in {'help', 'search', 'download', 'status', 'link', 'file', 'source', 'cancel', 'resume', 'results', 'next', 'prev'}:
             command, arg = 'search', text
         command_label = command if command in {'help', 'search', 'download', 'status', 'link', 'file', 'source', 'cancel', 'resume', 'results', 'next', 'prev'} else '未知命令'
@@ -689,7 +872,8 @@ class BotService:
             if not job:
                 job = await asyncio.to_thread(self.enqueue, tracks[index], ident)
             self.put('bot_task', ident, {'id': ident, 'owner': owner, 'channel': message['channel'], 'user': message['user'], 'notified': None})
-            self.reply(message, f'已加入下载队列\n\n{concise(job["track"]["title"])}\n文件大小：{track_size(job["track"])}\n任务 {ident[:8]}\n\n完成后自动发送文件，超限时提供链接。', buttons=[self.task_buttons(ident, job['status']), [{'text': '我的任务', 'callback_data': '/status'}]])
+            delivery = '完成后自动发送原文件链接。' if message['channel'] in WEBHOOK_CHANNELS else '完成后自动发送文件，超限时提供链接。'
+            self.reply(message, f'已加入下载队列\n\n{concise(job["track"]["title"])}\n文件大小：{track_size(job["track"])}\n任务 {ident[:8]}\n\n{delivery}', buttons=[self.task_buttons(ident, job['status']), [{'text': '我的任务', 'callback_data': '/status'}]])
         elif command == 'status' or (command in {'link', 'file', 'cancel', 'resume'} and not arg.strip()):
             jobs = [(t, job) for t in self.values('bot_task') if t['owner'] == owner
                     if (job := self.get('download', t['id']))][:5]
@@ -698,13 +882,13 @@ class BotService:
                 if not job:
                     continue
                 lines.extend([f'{index}. {concise(job["track"]["title"])}',
-                              f'{STATUS_LABELS.get(job["status"], job["status"])} · 任务 {task["id"] if message["channel"] == "wecom" else task["id"][:8]}',
+                              f'{STATUS_LABELS.get(job["status"], job["status"])} · 任务 {task["id"] if message["channel"] != "tg" else task["id"][:8]}',
                               self.job_size(job) if job['status'] == 'complete' else job_progress(job), ''])
                 actions = self.task_buttons(task['id'], job['status'], f'{index}. ')
                 if actions:
                     buttons.append(actions)
             buttons.append([{'text': '刷新任务', 'callback_data': '/status'}, {'text': '功能菜单', 'callback_data': '/menu'}])
-            if message['channel'] == 'wecom' and len(lines) > 2:
+            if message['channel'] != 'tg' and len(lines) > 2:
                 lines.append('操作：链接 / 继续 / 取消，加上完整任务编号。')
             self.reply(message, '\n'.join(lines) if len(lines) > 2 else '我的任务\n\n暂无任务，先搜索喜欢的音乐。', buttons=buttons)
         elif command in {'link', 'file', 'cancel', 'resume'}:
@@ -797,10 +981,19 @@ class BotService:
                     user = str(sender.get('id', ''))
                     private = bool(message and message.get('chat', {}).get('type') == 'private' and
                                    str(message['chat'].get('id')) == user)
-                    text = callback.get('data', '') if callback else (message or {}).get('text', '')
-                    if private and text:
+                    text = callback.get('data', '') if callback else (message or {}).get('text', '') or (message or {}).get('caption', '')
+                    image = None
+                    if not callback and private and self.allowed('tg', user):
+                        photos = (message or {}).get('photo') or []
+                        document = (message or {}).get('document') or {}
+                        photo = next((p for p in reversed(photos) if p.get('file_size', 0) <= 5 * 1024 * 1024), photos[-1] if photos else None)
+                        if not photo and document.get('mime_type') in {'image/png', 'image/jpeg', 'image/webp'}:
+                            photo = document
+                        if photo:
+                            image = {'id': photo['file_id'], 'size': photo.get('file_size', 0)}
+                    if private and (text or image):
                         self.accept('tg', user, str(update['update_id']), text,
-                                    reply_message_id=message.get('message_id') if callback else None)
+                                    reply_message_id=message.get('message_id') if callback else None, image=image)
                     self.put('bot_setting', 'tg_offset', update['update_id'] + 1)
                     if callback and private and self.allowed('tg', user):
                         try:
@@ -837,6 +1030,10 @@ class BotService:
         text = f'下载完成\n{concise(job["track"]["title"])} · {concise(job["track"].get("artist"))}\n{self.job_size(job)}'
         if job.get('processing'):
             text += '\n' + concise(job['processing'].get('detail', ''), 120)
+        if message['channel'] in WEBHOOK_CHANNELS:
+            self.reply(message, text + ('\n通过链接下载原文件。' if self.links else '\n请在网页下载原文件，或配置公网访问地址。'),
+                       url=self.links.create(job) if self.links else None, job_id=job['id'])
+            return
         if message['channel'] == 'wecom' and target.stat().st_size > limit:
             if self.links:
                 self.reply(message, text + f'\n文件超过该渠道发送上限（{format_size(limit)}），请通过链接下载原文件。',
@@ -958,7 +1155,9 @@ class BotService:
 
     def send(self, item):
         if item['channel'] in WEBHOOK_CHANNELS:
-            return self.webhook(item['channel'], item)
+            if item['user'] == 'downloads':
+                return self.webhook(item['channel'], item)
+            return self.channels.send(item)
         if item.get('file'):
             try:
                 return self.send_file(item)
@@ -1018,6 +1217,7 @@ class BotService:
     async def deliveries(self):
         while True:
             try:
+                await asyncio.to_thread(self.queue_agent_notifications)
                 await asyncio.to_thread(self.queue_webhook_notifications)
                 for task in self.values('bot_task'):
                     if not self.allowed(task['channel'], task['user']):
@@ -1042,7 +1242,8 @@ class BotService:
                         continue
                     if item.get('file') or (item['channel'] == 'wecom' and not self.crypt):
                         continue
-                    if (item['channel'] == 'tg' and not self.tg_token) or (item['channel'] in WEBHOOK_CHANNELS and not self.config[item['channel'] + '_enabled']):
+                    if (item['channel'] == 'tg' and not self.tg_token) or (item['channel'] in WEBHOOK_CHANNELS
+                            and item['user'] == 'downloads' and not self.config[item['channel'] + '_enabled']):
                         continue
                     if item['next'] > time.time():
                         continue
@@ -1075,6 +1276,10 @@ class BotService:
                         expired = record.get('expires', now + 1) <= now if kind != 'bot_inbox' else record['done'] and record['created'] < now - 604800
                         if expired:
                             self.remove(kind, record['id'])
+                for turn in self.values('bot_ai_turn'):
+                    if turn['notified'] and turn['created'] < now - 604800:
+                        self.remove('agent_result', turn['id'])
+                        self.remove('bot_ai_turn', turn['id'])
             except Exception as error:
                 self.log('error', f'机器人通知处理失败：{self.error_detail(error)}', category='bot')
             await asyncio.sleep(3)
@@ -1129,6 +1334,10 @@ class BotService:
         self.log('info', '通知服务已启用：音源独立搜索，下载文件交付与 Webhook 通知', category='bot')
 
     async def stop(self):
+        if self.ai_agent:
+            for turn in self.values('bot_ai_turn'):
+                if not turn['notified'] and turn['session_id'] in self.ai_agent.running:
+                    self.ai_agent.stop_turn(turn['session_id'])
         all_tasks = self.tasks + list(self.search_tasks.values())
         for task in all_tasks:
             task.cancel()
@@ -1167,7 +1376,7 @@ def install(app, **services):
                 continue
             if key not in cfg:
                 raise HTTPException(400, '不支持的机器人配置字段')
-            if key.endswith('_enabled'):
+            if key.endswith('_enabled') or key == 'bot_ai_allow_actions':
                 if not isinstance(value, bool):
                     raise HTTPException(400, '启用状态必须为布尔值')
             elif key == 'link_ttl_seconds':
@@ -1294,15 +1503,21 @@ def install(app, **services):
             fields = xml_fields(bot.crypt.decrypt(fields['Encrypt'], msg_signature, timestamp, nonce))
             if fields.get('ToUserName') != bot.corp or fields.get('AgentID') != bot.agent:
                 raise ValueError('wrong application')
-            if fields.get('MsgType') == 'text':
+            if fields.get('MsgType') in {'text', 'image'}:
                 if not fields.get('MsgId') or not fields.get('FromUserName'):
                     raise ValueError('missing message identity')
-                bot.accept('wecom', fields['FromUserName'], fields['MsgId'], fields.get('Content', ''))
+                image = None
+                if fields['MsgType'] == 'image':
+                    if not fields.get('MediaId'):
+                        raise ValueError('missing media identity')
+                    image = {'id': fields['MediaId']}
+                bot.accept('wecom', fields['FromUserName'], fields['MsgId'], fields.get('Content', ''), image=image)
         except (ValueError, KeyError, ET.ParseError, IndexError):
             raise HTTPException(403, '回调验证失败')
         # Acknowledge before search/download; replies use the application send API.
         return Response('success', media_type='text/plain')
 
+    bot_channels.install(router, lambda: bot)
     app.include_router(router)
     async def start():
         if bot.tg_token and bot.config['tg_local_enabled']:

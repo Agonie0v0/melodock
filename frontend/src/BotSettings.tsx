@@ -6,6 +6,9 @@ type BotConfig = {
   link_ttl_seconds: number;
   bot_sources: string;
   tg_enabled: boolean;
+  tg_ai_enabled: boolean;
+  wecom_ai_enabled: boolean;
+  bot_ai_allow_actions: boolean;
   tg_api_url: string;
   tg_local_enabled: boolean;
   tg_local_api_id: string;
@@ -22,6 +25,21 @@ type BotConfig = {
   discord_enabled: boolean;
   feishu_enabled: boolean;
   dingtalk_enabled: boolean;
+  feishu_bot_enabled: boolean;
+  dingtalk_bot_enabled: boolean;
+  discord_bot_enabled: boolean;
+  feishu_ai_enabled: boolean;
+  dingtalk_ai_enabled: boolean;
+  discord_ai_enabled: boolean;
+  feishu_app_id: string;
+  feishu_region: string;
+  feishu_allowed_users: string;
+  dingtalk_client_id: string;
+  dingtalk_robot_code: string;
+  dingtalk_allowed_users: string;
+  discord_application_id: string;
+  discord_public_key: string;
+  discord_allowed_users: string;
 };
 const secretFields = [
   "tg_token",
@@ -35,6 +53,11 @@ const secretFields = [
   "feishu_sign_secret",
   "dingtalk_webhook",
   "dingtalk_sign_secret",
+  "feishu_app_secret",
+  "feishu_verification_token",
+  "feishu_encrypt_key",
+  "dingtalk_client_secret",
+  "discord_bot_token",
 ];
 
 export function BotSettings() {
@@ -52,7 +75,16 @@ export function BotSettings() {
   } | null>(null);
   async function load() {
     try {
-      setConfig(await api<BotConfig>("/bots/config"));
+      const result = await api<BotConfig>("/bots/config");
+      setConfig({
+        ...result,
+        tg_ai_enabled: result.tg_ai_enabled ?? false,
+        wecom_ai_enabled: result.wecom_ai_enabled ?? false,
+        feishu_ai_enabled: result.feishu_ai_enabled ?? false,
+        dingtalk_ai_enabled: result.dingtalk_ai_enabled ?? false,
+        discord_ai_enabled: result.discord_ai_enabled ?? false,
+        bot_ai_allow_actions: result.bot_ai_allow_actions ?? true,
+      });
       setError("");
     } catch (e) {
       setError((e as Error).message);
@@ -86,7 +118,7 @@ export function BotSettings() {
       <label key={key}>
         {label}
         <input
-          value={String(config![key])}
+          value={String(config![key] ?? "")}
           placeholder={placeholder}
           onChange={(e) => update(key, e.target.value)}
         />
@@ -250,6 +282,65 @@ export function BotSettings() {
           连接测试使用当前填写的凭据和代理，无需先保存，也不会发送消息。
           保存后机器人配置才会生效；下载和命令处理的错误可在“运行日志 →
           通知与机器人”中查看。
+        </p>
+      </section>
+      <section className="settings-section settings-behavior">
+        <h2>渠道 AI 对话</h2>
+        <p>
+          AI
+          是可选功能，各渠道默认关闭。配置模型并开启后，普通文字和歌单图片交给
+          AI；搜索、下载、翻页等原有命令仍可使用。未配置或关闭 AI
+          时，普通歌名继续使用原搜索功能，下载通知照常发送。
+        </p>
+        <label className="ready-filter">
+          <input
+            type="checkbox"
+            checked={config.tg_ai_enabled}
+            onChange={(e) => update("tg_ai_enabled", e.target.checked)}
+          />
+          Telegram 使用 AI 对话
+        </label>
+        {(
+          [
+            ["feishu", "飞书 / Lark"],
+            ["dingtalk", "钉钉"],
+            ["discord", "Discord"],
+          ] as const
+        ).map(([channel, label]) => (
+          <label className="ready-filter" key={channel}>
+            <input
+              type="checkbox"
+              checked={Boolean(config[`${channel}_ai_enabled`])}
+              onChange={(e) =>
+                update(`${channel}_ai_enabled`, e.target.checked)
+              }
+            />
+            {label} 使用 AI 对话
+          </label>
+        ))}
+        <label className="ready-filter">
+          <input
+            type="checkbox"
+            checked={config.wecom_ai_enabled}
+            onChange={(e) => update("wecom_ai_enabled", e.target.checked)}
+          />
+          企业微信使用 AI 对话
+        </label>
+        <label className="ready-filter">
+          <input
+            type="checkbox"
+            checked={config.bot_ai_allow_actions}
+            onChange={(e) => update("bot_ai_allow_actions", e.target.checked)}
+          />
+          允许渠道 AI 执行操作
+        </label>
+        <p>
+          允许操作包括创建或追加歌单、下载及创建整理预览；关闭后仅查询。沿用渠道用户白名单，各用户的对话独立保存，音乐库与歌单仍为项目共享数据。文字、图片和相关音乐资料会发送给已配置的模型服务。
+        </p>
+        <p>
+          /ai_new 新对话 · /ai_stop 停止本轮 · /ai_status 查看进度 ·
+          /ai_readonly 仅查询 · /ai_write 允许操作。图片最大 5 MB，支持
+          PNG、JPEG、WebP。微信入口使用下方企业微信自建应用。
         </p>
       </section>
       <section className="settings-section settings-behavior">
@@ -420,7 +511,7 @@ export function BotSettings() {
         <p>
           飞书、钉钉和 Discord 通过群 Webhook
           通知新下载任务的完成、失败与取消，完成时附原文件下载链接。群 Webhook
-          仅提供结果通知，搜索和选曲请使用 Telegram、企业微信或 Web。
+          无需配置 AI；接收对话可使用下方独立的应用机器人。
         </p>
         {(
           [
@@ -459,6 +550,149 @@ export function BotSettings() {
               检查 {label} 配置
             </button>
             {feedback(channel)}
+          </details>
+        ))}
+      </section>
+      <section className="settings-section settings-sources">
+        <h2>更多对话机器人</h2>
+        <p>
+          应用机器人与上方群 Webhook 分别配置，可分别开启。不配置 AI
+          也能搜索、下载和查询任务；开启对应渠道的 AI
+          后，可用同一个入口对话和识别歌单图片。当前支持白名单用户单聊，下载完成通过原文件链接交付。
+        </p>
+        {(
+          [
+            ["feishu", "飞书 / Lark"],
+            ["dingtalk", "钉钉"],
+            ["discord", "Discord"],
+          ] as const
+        ).map(([channel, label]) => (
+          <details className="source-setting" key={channel}>
+            <summary>{label} 对话机器人</summary>
+            <label className="ready-filter">
+              <input
+                type="checkbox"
+                checked={Boolean(config[`${channel}_bot_enabled`])}
+                onChange={(e) =>
+                  update(`${channel}_bot_enabled`, e.target.checked)
+                }
+              />
+              启用 {label} 对话机器人
+            </label>
+            <div className="settings-grid">
+              {channel === "feishu" && (
+                <>
+                  {field("feishu_app_id", "飞书 App ID")}
+                  {secret("feishu_app_secret", "飞书 App Secret")}
+                  {secret(
+                    "feishu_verification_token",
+                    "飞书 Verification Token",
+                  )}
+                  {secret("feishu_encrypt_key", "飞书 Encrypt Key")}
+                  <label>
+                    飞书区域
+                    <select
+                      value={config.feishu_region || "feishu"}
+                      onChange={(e) => update("feishu_region", e.target.value)}
+                    >
+                      <option value="feishu">国内飞书</option>
+                      <option value="lark">国际 Lark</option>
+                    </select>
+                  </label>
+                </>
+              )}
+              {channel === "dingtalk" && (
+                <>
+                  {field("dingtalk_client_id", "钉钉 Client ID / AppKey")}
+                  {secret(
+                    "dingtalk_client_secret",
+                    "钉钉 Client Secret / AppSecret",
+                  )}
+                  {field("dingtalk_robot_code", "钉钉 Robot Code")}
+                </>
+              )}
+              {channel === "discord" && (
+                <>
+                  {field("discord_application_id", "Discord Application ID")}
+                  {field(
+                    "discord_public_key",
+                    "Discord Public Key",
+                    "64 位十六进制公钥",
+                  )}
+                  {secret("discord_bot_token", "Discord Bot Token")}
+                </>
+              )}
+              {field(
+                `${channel}_allowed_users`,
+                `${label} 对话用户白名单（必填）`,
+                channel === "feishu"
+                  ? "Open ID，逗号分隔"
+                  : channel === "dingtalk"
+                    ? "企业 UserID / senderStaffId，逗号分隔"
+                    : "数字用户 ID，逗号分隔",
+              )}
+            </div>
+            <label>
+              {label} 消息回调地址
+              <input
+                readOnly
+                value={
+                  config.public_url.trim()
+                    ? (config.public_url.includes("://") ? "" : "http://") +
+                      config.public_url.trim().replace(/\/$/, "") +
+                      `/bot/${channel}`
+                    : "填写公网访问地址后生成"
+                }
+              />
+            </label>
+            {channel === "feishu" && (
+              <p>
+                创建自建应用并开启机器人，订阅
+                im.message.receive_v1，选择发送事件至开发者服务器并配置加密策略。开通接收单聊、发送消息和读取消息资源权限，发布应用。支持文字和图片单聊，回复发送到发起用户。
+              </p>
+            )}
+            {channel === "dingtalk" && (
+              <p>
+                创建企业内部应用机器人，消息接收选择 HTTP
+                模式并填写回调地址。配置机器人单聊发送与接收文件权限，发布应用。使用企业成员
+                UserID 白名单；支持文字和图片单聊。
+              </p>
+            )}
+            {channel === "discord" && (
+              <>
+                <p>
+                  在开发者平台填写 Interactions Endpoint
+                  URL，通过验签后将应用安装到服务器（包含 bot 与
+                  applications.commands 权限）。保存后注册 /melokeep 命令，text
+                  填歌名、/status 或 /ai 需求，image
+                  可附歌单图片。结果通过机器人私信发送，请允许私信。此入口不监听普通聊天消息。
+                </p>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busy || dirty || !config.discord_bot_enabled}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError("");
+                    setMessage("");
+                    try {
+                      const result = await api<{ detail: string }>(
+                        "/bots/discord/commands",
+                        "POST",
+                        {},
+                      );
+                      setMessage(result.detail);
+                    } catch (e) {
+                      setError((e as Error).message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  注册 Discord /melokeep 命令
+                </button>
+              </>
+            )}
           </details>
         ))}
       </section>

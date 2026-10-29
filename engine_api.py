@@ -963,6 +963,8 @@ def install(old, root):
         staging = old.FILE_ROOT / '.partial' / ident
         log_path, log_cursor = Path(str(output_path) + '.log'), 0
         processing = library.settings()
+        if job.get('agent_organize'):
+            processing.update(auto_scrape=True, auto_organize=True)
         processing_files, processing_sources = [], {}
         def clear_staging():
             if staging.exists() and staging.resolve().is_relative_to(old.FILE_ROOT.resolve()) and not staging.is_symlink():
@@ -1129,7 +1131,7 @@ def install(old, root):
     def enqueue(items: list[DownloadItem]):
         return enqueue_tracks(items)
 
-    def enqueue_tracks(items, job_ids=None):
+    def enqueue_tracks(items, job_ids=None, *, organize=False):
         if not 1 <= len(items) <= 200:
             raise HTTPException(400, '每批请选择 1–200 首')
         prepared = []
@@ -1153,6 +1155,8 @@ def install(old, root):
                 job = {'id': ident, 'track': value, 'quality_id': quality['id'], 'quality_label': quality['label'],
                        'status': 'queued', 'bytes': 0, 'total_bytes': None, 'detail': '等待原音源下载器',
                        'file': None, 'created_at': int(time.time())}
+                if organize:
+                    job['agent_organize'] = True
                 put('download', job['id'], job)
                 launch(job, song)
                 result.append(job)
@@ -1428,8 +1432,81 @@ def install(old, root):
     def bot_enqueue(value, ident):
         return enqueue_tracks([DownloadItem(track_id=value['id'], quality_id=value['qualities'][0]['id'])], [ident])[0]
 
+    # The assistant uses the same application services as the UI and bots.
+    def agent_track(value):
+        return {key: value.get(key) for key in ('id', 'title', 'artist', 'album', 'source', 'duration', 'qualities')}
+
+    def agent_collection(value):
+        return {'id': value['id'], 'name': value['name'], 'detail': value['detail'],
+                'tracks': [agent_track(t) for t in value['tracks'][:100]], 'total': len(value['tracks'])}
+
+    async def agent_search(keyword):
+        found, partial = await bot_search(keyword, None)
+        return {'tracks': [agent_track(t) for t in found[:24]], 'partial': partial,
+                'detail': f'找到 {len(found)} 个候选，返回前 24 个' + ('；部分音源失败或超时' if partial else '')}
+
+    async def agent_download(track_ids, organize=False):
+        results = []
+        for sid in dict.fromkeys(track_ids):
+            record = get('track', sid, {})
+            title = record.get('track', {}).get('title', '歌曲')
+            active = next((j for j in values('download') if j['track']['id'] == sid and
+                           j['status'] in {'queued', 'resolving', 'downloading', 'enriching', 'paused'}), None)
+            if active:
+                results.append({'track_id': sid, 'title': title, 'id': active['id'], 'status': active['status'],
+                                'detail': '复用已有下载任务；整理方式沿用原任务，请到下载队列查看'})
+                continue
+            if await asyncio.to_thread(downloaded_file, sid, record):
+                results.append({'track_id': sid, 'title': title, 'status': 'exists', 'detail': '歌曲已下载；如需整理，请查询曲库后创建整理预览'})
+                continue
+            try:
+                value = await resolved_track(sid)
+                job = (await asyncio.to_thread(enqueue_tracks,
+                       [DownloadItem(track_id=sid, quality_id=value['qualities'][0]['id'])], organize=organize))[0]
+                results.append({'track_id': sid, 'title': title, 'id': job['id'], 'status': job['status'], 'created': True,
+                                'detail': '已加入下载队列' + ('，完成后自动刮削整理入库，歧义项需审核' if organize else '')})
+            except HTTPException as error:
+                results.append({'track_id': sid, 'title': title, 'status': 'failed', 'detail': error.detail})
+        return {'downloads': results, 'detail': '批次处理结束，请逐项查看入队、已存在和失败状态'}
+
+    def agent_status():
+        fields = ('id', 'status', 'detail', 'processing')
+        return {'downloads': [{k: j[k] for k in fields if k in j} | {'title': j['track']['title']} for j in values('download')[:30]],
+                'library_jobs': [{k: j[k] for k in fields if k in j} for j in values('library_job')[:20]],
+                'auto_scrape': library.settings()['auto_scrape'], 'auto_organize': library.settings()['auto_organize'],
+                'detail': '已读取当前任务状态'}
+
+    def agent_browse(keyword=''):
+        matches = []
+        for path in library.scan():
+            try:
+                item = library_file(file_token(path))
+                song = item.get('track') or {}
+                if keyword.casefold() in ' '.join(str(v) for v in (path.name, song.get('title', ''), song.get('artist', ''))).casefold():
+                    matches.append({'path': item['path'], 'name': path.name, 'track': agent_track(song)})
+                if len(matches) >= 50:
+                    break
+            except (HTTPException, OSError):
+                continue
+        return {'files': matches, 'detail': f'返回 {len(matches)} 个文件（最多 50 个，可细化关键词）'}
+
+    def agent_organize(paths, action='both'):
+        job = library.submit(ProcessBody(paths=paths, action=action))
+        return {'id': job['id'], 'status': job['status'], 'detail': '已创建整理预览，请在刮削整理工作台审核后应用'}
+
+    import ai_agent
+    ai_agent.install(old.app, get=get, put=put, values=values, remove=remove, operations={
+        'search_music': agent_search, 'list_playlists': lambda: {'playlists': collections(), 'detail': '已读取本地歌单'},
+        'read_playlist': lambda playlist_id: agent_collection(collection_read(playlist_id)),
+        'create_playlist': lambda name: agent_collection(collection_create(PlaylistCreateBody(name=name))),
+        'add_to_playlist': lambda playlist_id, track_ids: agent_collection(collection_add_tracks(playlist_id, PlaylistTracksBody(track_ids=track_ids))),
+        'download_music': agent_download, 'get_status': agent_status,
+        'browse_library': agent_browse, 'preview_organize': agent_organize,
+    })
+
     import bot_notifications
     bot_notifications.install(old.app, get=get, put=put, values=values, remove=remove,
+                              ai_agent=old.app.state.ai_agent,
                               search=bot_search, search_progress=bot_search, enqueue=bot_enqueue, control=control_download,
                               resolve=resolve_library_file, log=old.pushlog,
                               project_proxy=lambda: old.manager.config.get('proxy_url', ''),
