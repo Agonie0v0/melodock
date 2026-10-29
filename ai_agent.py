@@ -1,4 +1,4 @@
-"""Bounded, server-side Chat Completions agent using MeloKeep's own operations."""
+"""Bounded, server-side OpenAI-compatible agent using MeloKeep's own operations."""
 import asyncio
 import base64
 import copy
@@ -25,13 +25,16 @@ class Settings(Input):
     model: str = Field(default='', max_length=200)
     api_key: str = Field(default='', max_length=2000)
     clear_key: bool = False
+    api_type: Literal['chat_completions', 'responses'] = 'chat_completions'
+    proxy_mode: Literal['direct', 'project'] = 'direct'
 
     @field_validator('base_url')
     @classmethod
     def endpoint(cls, value):
         if value:
             parsed = urlsplit(value)
-            if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            if (parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password
+                    or parsed.query or parsed.fragment or parsed.port == 0 or '\\' in value):
                 raise ValueError('请填写不含凭据和查询参数的 HTTP(S) API 地址')
         return value.rstrip('/')
 
@@ -122,25 +125,88 @@ PROMPT = '''你是 MeloKeep 音乐助手，用中文帮助用户搜索、加入�
 工具额度不足时总结已完成与剩余任务，不要声称全部完成。'''
 
 
-def completion(settings, messages, tools):
-    url = settings['base_url'].rstrip('/') + '/chat/completions'
+def api_url(settings, endpoint):
+    base = settings['base_url'].rstrip('/')
+    for suffix in ('/chat/completions', '/responses', '/models'):
+        if base.endswith(suffix):
+            base = base[:-len(suffix)]
+            break
+    return base + '/' + endpoint
+
+
+def request_json(settings, method, endpoint, payload=None):
+    url = api_url(settings, endpoint)
     headers = {'Content-Type': 'application/json'}
     if settings['api_key']:
         headers['Authorization'] = 'Bearer ' + settings['api_key']
     try:
-        payload = {'model': settings['model'], 'messages': messages}
-        if tools:
-            payload.update(tools=tools, tool_choice='auto')
-        with requests.post(url, headers=headers, json=payload,
-                           timeout=(10, 90), allow_redirects=False, stream=True) as response:
-            if response.status_code != 200:
-                raise HTTPException(502, f'AI 接口返回 HTTP {response.status_code}，请检查地址、密钥、模型及图片/工具调用支持')
-            data = bytearray()
-            for chunk in response.iter_content(65536):
-                data.extend(chunk)
-                if len(data) > 2_000_000:
-                    raise HTTPException(502, 'AI 接口响应过大')
-        message = json.loads(data)['choices'][0]['message']
+        with requests.Session() as transport:
+            transport.trust_env = False
+            proxy = settings.get('_proxy', '')
+            with transport.request(method, url, headers=headers, json=payload,
+                    proxies={'http': proxy, 'https': proxy},
+                    timeout=(10, 90 if method == 'POST' else 20), allow_redirects=False, stream=True) as response:
+                if response.status_code != 200:
+                    hint = {401: '请检查 API Key', 403: '请检查账号权限、地区或代理',
+                            404: '请检查 API 地址及接口类型', 429: '请求受限，请检查额度或稍后重试'}.get(
+                                response.status_code, '请检查地址、模型、接口类型和服务商状态')
+                    raise HTTPException(502, f'AI 接口返回 HTTP {response.status_code}，{hint}')
+                data = bytearray()
+                for chunk in response.iter_content(65536):
+                    data.extend(chunk)
+                    if len(data) > 2_000_000:
+                        raise HTTPException(502, 'AI 接口响应过大')
+        return json.loads(data)
+    except requests.RequestException:
+        raise HTTPException(502, '无法连接 AI 接口或请求超时，请检查服务地址、代理及网络') from None
+    except (ValueError, TypeError):
+        raise HTTPException(502, 'AI 接口未返回有效 JSON，请检查接口地址和服务商状态') from None
+
+
+def response_input(messages, settings):
+    items = []
+    for message in messages:
+        if message['role'] == 'tool':
+            items.append({'type': 'function_call_output', 'call_id': message['tool_call_id'], 'output': message['content']})
+            continue
+        if (message.get('_responses_model') == settings['model']
+                and message.get('_responses_origin') == api_url(settings, 'responses') and message.get('_responses_output')):
+            items.extend(message['_responses_output'])
+            continue
+        content = message.get('content') or ''
+        if isinstance(content, list):
+            content = [{'type': 'input_text', 'text': part['text']} if part['type'] == 'text' else
+                       {'type': 'input_image', 'image_url': part['image_url']['url']} for part in content]
+        if content:
+            items.append({'role': message['role'], 'content': content})
+        for call in message.get('tool_calls', []):
+            items.append({'type': 'function_call', 'call_id': call['id'], **call['function']})
+    return items
+
+
+def completion(settings, messages, tools):
+    try:
+        responses = settings.get('api_type') == 'responses'
+        payload = {'model': settings['model']}
+        output = None
+        if responses:
+            payload.update(input=response_input(messages, settings), store=False, include=['reasoning.encrypted_content'])
+            if tools:
+                payload.update(tools=[{'type': 'function', **tool['function'], 'strict': False} for tool in tools], tool_choice='auto')
+            data = request_json(settings, 'POST', 'responses', payload)
+            if data.get('status') != 'completed':
+                raise HTTPException(502, 'Responses 接口未完成本轮响应，请检查模型、额度和接口配置后重试')
+            output = [item for item in data['output'] if item.get('type') in {'message', 'function_call', 'reasoning'}]
+            content = '\n'.join(part.get('text') or part.get('refusal', '') for item in output if item['type'] == 'message'
+                                for part in item.get('content', []) if part.get('type') in {'output_text', 'refusal'})
+            message = {'content': content, 'tool_calls': [
+                {'id': item['call_id'], 'type': 'function', 'function': {'name': item['name'], 'arguments': item['arguments']}}
+                for item in output if item['type'] == 'function_call']}
+        else:
+            payload['messages'] = [{k: v for k, v in message.items() if not k.startswith('_')} for message in messages]
+            if tools:
+                payload.update(tools=tools, tool_choice='auto')
+            message = request_json(settings, 'POST', 'chat/completions', payload)['choices'][0]['message']
         content, calls = message.get('content') or message.get('refusal'), message.get('tool_calls') or []
         if content is not None and not isinstance(content, str) or not isinstance(calls, list) or len(calls) > 48:
             raise ValueError('invalid message')
@@ -153,17 +219,32 @@ def completion(settings, messages, tools):
                     raise ValueError('invalid tool call')
                 clean['tool_calls'].append({'id': call['id'], 'type': 'function',
                                             'function': {'name': function['name'], 'arguments': function['arguments']}})
+        if output:
+            clean.update(_responses_output=output, _responses_model=settings['model'], _responses_origin=api_url(settings, 'responses'))
+        if not clean['content'] and not clean.get('tool_calls'):
+            raise ValueError('empty response')
         return clean
-    except requests.RequestException:
-        raise HTTPException(502, '无法连接 AI 接口或请求超时，请检查服务地址与网络') from None
-    except (ValueError, KeyError, IndexError, TypeError):
-        raise HTTPException(502, 'AI 接口未返回有效对话，请使用支持 Chat Completions 和工具调用的模型') from None
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        raise HTTPException(502, 'AI 接口未返回有效对话，请检查所选接口类型以及模型的工具调用能力') from None
+
+
+def list_models(settings):
+    data = request_json(settings, 'GET', 'models')
+    try:
+        if not isinstance(data['data'], list) or len(data['data']) > 10000:
+            raise ValueError('invalid model list')
+        models = sorted({item['id'] for item in data['data'] if isinstance(item, dict)
+                         and isinstance(item.get('id'), str) and 0 < len(item['id']) <= 200})[:2000]
+        return {'models': models, 'detail': f'服务商返回 {len(models)} 个模型；工具与图片能力请通过实际对话确认。'}
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(502, '服务商未返回有效模型列表，可以手动填写模型 ID') from None
 
 
 class Agent:
-    def __init__(self, app, *, get, put, values, remove, operations):
+    def __init__(self, app, *, get, put, values, remove, operations, project_proxy=None):
         self.get, self.put, self.values, self.remove = get, put, values, remove
         self.operations, self.running = operations, {}
+        self.project_proxy = project_proxy or (lambda: '')
         for session in values('agent_session'):
             if session['status'] in {'running', 'stopping'}:
                 session.update(status='interrupted', detail='服务重启，本轮已中断；请先查看执行记录再继续')
@@ -179,11 +260,7 @@ class Agent:
 
         @router.put('/settings')
         def settings_write(body: Settings):
-            value = body.model_dump(exclude={'clear_key'})
-            if not body.api_key and not body.clear_key:
-                value['api_key'] = self.settings()['api_key']
-            if body.enabled and (not body.base_url or not body.model):
-                raise HTTPException(400, '启用 AI 助手前请填写 API 地址和模型')
+            value = self.merge_settings(body)
             put('agent_settings', 'main', value)
             return self.public_settings()
 
@@ -192,12 +269,19 @@ class Agent:
             return [{'id': s['id'], 'title': s['title'], 'status': s['status']} for s in values('agent_session')[:50]]
 
         @router.post('/settings/test')
-        async def test():
-            settings = self.settings()
+        async def test(body: Settings | None = None):
+            settings = self.connection_settings(body)
             if not settings['base_url'] or not settings['model']:
-                raise HTTPException(400, '请先保存 API 地址和模型')
+                raise HTTPException(400, '请填写 API 地址和模型后测试，无需先保存')
             await asyncio.to_thread(completion, settings, [{'role': 'user', 'content': '请只回复：连接成功'}], [])
             return {'detail': '基础连接成功。图片识别和工具调用能力请在对话中验证。'}
+
+        @router.post('/settings/models')
+        async def models(body: Settings | None = None):
+            settings = self.connection_settings(body)
+            if not settings['base_url']:
+                raise HTTPException(400, '请先填写 API 地址，无需先保存或选择模型')
+            return await asyncio.to_thread(list_models, settings)
 
         @router.post('/sessions')
         def create():
@@ -236,7 +320,31 @@ class Agent:
         app.include_router(router)
 
     def settings(self):
-        return self.get('agent_settings', 'main', Settings().model_dump(exclude={'clear_key'}))
+        return Settings().model_dump(exclude={'clear_key'}) | self.get('agent_settings', 'main', {})
+
+    def merge_settings(self, body=None):
+        value = self.settings()
+        if body is not None:
+            value.update(body.model_dump(exclude={'clear_key', 'api_key'}, exclude_unset=True))
+            if body.clear_key:
+                value['api_key'] = ''
+            elif body.api_key:
+                value['api_key'] = body.api_key
+        return value
+
+    def connection_settings(self, body=None):
+        value = self.merge_settings(body)
+        proxy = self.project_proxy().strip() if value['proxy_mode'] == 'project' else ''
+        if value['proxy_mode'] == 'project' and not proxy:
+            raise HTTPException(400, '尚未配置项目代理，请在「音源与下载」填写代理，或选择直连')
+        if proxy:
+            try:
+                parsed = urlsplit(proxy)
+                if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.port == 0:
+                    raise ValueError()
+            except ValueError:
+                raise HTTPException(400, '项目代理地址无效，请检查「音源与下载」中的 HTTP / HTTPS 代理配置') from None
+        return value | {'_proxy': proxy}
 
     def create_session(self):
         if len(self.values('agent_session')) >= 50:
@@ -253,6 +361,7 @@ class Agent:
         settings = self.settings()
         if not settings['enabled'] or not settings['base_url'] or not settings['model']:
             raise HTTPException(400, '请先在设置中启用并配置 AI 助手')
+        settings = self.connection_settings()
         if ident in self.running:
             raise HTTPException(409, '本轮正在执行，请等待或停止')
         if len(self.running) >= 3:
@@ -284,7 +393,8 @@ class Agent:
 
     def public_settings(self):
         value = self.settings()
-        return {k: v for k, v in value.items() if k != 'api_key'} | {'key_configured': bool(value['api_key'])}
+        return {k: v for k, v in value.items() if k != 'api_key'} | {
+            'key_configured': bool(value['api_key']), 'project_proxy_configured': bool(self.project_proxy().strip())}
 
     def session(self, ident):
         session = self.get('agent_session', ident)

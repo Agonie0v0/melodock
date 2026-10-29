@@ -40,6 +40,9 @@ try {
     base_url: "",
     model: "",
     key_configured: false,
+    api_type: "chat_completions",
+    proxy_mode: "direct",
+    project_proxy_configured: true,
   };
   let session = null;
   let botSettings = {
@@ -71,6 +74,9 @@ try {
   let finish = true;
   let getCount = 0;
   let registrations = 0;
+  let testedSettings = null;
+  let modelDraft = null;
+  let failModels = false;
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     const method = route.request().method();
@@ -87,11 +93,32 @@ try {
     if (path === "/agent/settings") {
       if (method === "PUT") {
         const { api_key, clear_key, ...value } = route.request().postDataJSON();
-        settings = { ...value, key_configured: !!api_key && !clear_key };
+        settings = {
+          ...settings,
+          ...value,
+          key_configured: !clear_key && (!!api_key || settings.key_configured),
+        };
       }
       result = settings;
     }
-    if (path === "/agent/settings/test") result = { detail: "基础连接成功" };
+    if (path === "/agent/settings/test") {
+      testedSettings = route.request().postDataJSON();
+      result = { detail: "基础连接成功" };
+    }
+    if (path === "/agent/settings/models") {
+      modelDraft = route.request().postDataJSON();
+      if (failModels) {
+        await route.fulfill({
+          status: 502,
+          json: { detail: "模型列表暂不可用" },
+        });
+        return;
+      }
+      result = {
+        models: ["test-vision-model", "other-model"],
+        detail: "服务商返回 2 个模型，工具和图片能力需验证。",
+      };
+    }
     if (path === "/bots/config") {
       if (method === "PUT")
         botSettings = { ...botSettings, ...route.request().postDataJSON() };
@@ -168,14 +195,67 @@ try {
   await expect(page.getByText("先连接你的 AI 模型")).toBeVisible();
   await page.getByRole("button", { name: "配置 AI 助手" }).click();
   await page.getByLabel("启用 AI 助手", { exact: true }).check();
-  await page.getByLabel("API 基础地址").fill("https://example.test/v1");
-  await page.getByLabel("模型名称").fill("test-vision-model");
+  await page.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("补全 API 地址和模型");
+  await page
+    .getByLabel("API 基础地址")
+    .fill("https://example.test/v1/responses");
+  await page.getByLabel("接口类型", { exact: true }).selectOption("responses");
+  await page.getByLabel("AI 请求代理", { exact: true }).selectOption("project");
   await page.getByLabel("API Key", { exact: true }).fill("browser-test-secret");
+  await expect(page.getByLabel("选择可用模型", { exact: true })).toBeVisible();
+  assert.equal(settings.base_url, "");
+  assert.equal(modelDraft.api_key, "browser-test-secret");
+  assert.equal(modelDraft.proxy_mode, "project");
+  await page
+    .getByLabel("选择可用模型", { exact: true })
+    .selectOption("test-vision-model");
+  await page.getByRole("button", { name: "测试当前配置", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("基础连接成功");
+  assert.equal(testedSettings.base_url, "https://example.test/v1/responses");
+  assert.equal(testedSettings.model, "test-vision-model");
+  assert.equal(testedSettings.api_type, "responses");
+  assert.equal(testedSettings.proxy_mode, "project");
+  assert.equal(testedSettings.api_key, "browser-test-secret");
+  assert.equal(settings.base_url, "");
+  failModels = true;
+  await page.getByRole("button", { name: "获取模型列表", exact: true }).click();
+  await expect(
+    page.getByText("模型列表暂不可用；也可手动填写模型 ID。", { exact: true }),
+  ).toBeVisible();
+  failModels = false;
+  await page.getByRole("button", { name: "获取模型列表", exact: true }).click();
+  await expect(
+    page.getByText("服务商返回 2 个模型，工具和图片能力需验证。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  // Reproduce autofill without an input event: saving must read the actual form value.
+  await page.getByLabel("模型名称", { exact: true }).evaluate((input) => {
+    input.value = "autofill-vision-model";
+  });
   await page.getByRole("button", { name: "保存配置", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("AI 配置已保存");
+  assert.equal(settings.model, "autofill-vision-model");
+  assert.equal(settings.api_type, "responses");
+  assert.equal(settings.proxy_mode, "project");
   await expect(page.getByLabel("API Key", { exact: true })).toHaveValue("");
-  await page.getByRole("button", { name: "测试已保存的连接" }).click();
+  await page.getByRole("button", { name: "测试当前配置", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("基础连接成功");
+  await mkdir("../output", { recursive: true });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1800 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    assert.ok(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    );
+    await page
+      .locator(".ai-settings")
+      .screenshot({ path: `../output/ai-model-settings-${width}.png` });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await nav.getByRole("button", { name: "AI 助手", exact: true }).click();
   await page
     .getByRole("button", {

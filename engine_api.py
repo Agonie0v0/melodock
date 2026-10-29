@@ -1495,7 +1495,8 @@ def install(old, root):
         return {'id': job['id'], 'status': job['status'], 'detail': '已创建整理预览，请在刮削整理工作台审核后应用'}
 
     import ai_agent
-    ai_agent.install(old.app, get=get, put=put, values=values, remove=remove, operations={
+    ai_agent.install(old.app, get=get, put=put, values=values, remove=remove,
+                     project_proxy=lambda: old.manager.config.get('proxy_url', ''), operations={
         'search_music': agent_search, 'list_playlists': lambda: {'playlists': collections(), 'detail': '已读取本地歌单'},
         'read_playlist': lambda playlist_id: agent_collection(collection_read(playlist_id)),
         'create_playlist': lambda name: agent_collection(collection_create(PlaylistCreateBody(name=name))),

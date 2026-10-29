@@ -4,6 +4,8 @@ import json
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 
 import pytest
 from fastapi import FastAPI
@@ -158,15 +160,131 @@ def test_http_protocol_sanitization_and_error_redaction(monkeypatch):
     response.status_code = 200
     response.iter_content.return_value = [json.dumps({'choices': [{'message': {**message(tool('get_status', {})), 'reasoning_content': 'private'}}]}).encode()]
     post = Mock(return_value=response)
-    monkeypatch.setattr(ai_agent.requests, 'post', post)
+    transport = Mock(request=post)
+    transport.__enter__ = Mock(return_value=transport)
+    transport.__exit__ = Mock(return_value=False)
+    monkeypatch.setattr(ai_agent.requests, 'Session', Mock(return_value=transport))
     settings = {'base_url': 'https://example.test/v1', 'api_key': 'secret', 'model': 'model'}
     result = ai_agent.completion(settings, [{'role': 'user', 'content': 'hi'}], [])
     assert result['tool_calls'][0]['function']['name'] == 'get_status'
     assert 'reasoning_content' not in result
-    assert post.call_args.args[0] == 'https://example.test/v1/chat/completions'
+    assert post.call_args.args == ('POST', 'https://example.test/v1/chat/completions')
     assert post.call_args.kwargs['allow_redirects'] is False
+    assert transport.trust_env is False
+    assert post.call_args.kwargs['proxies'] == {'http': '', 'https': ''}
     response.iter_content.return_value = [json.dumps({'choices': [{'message': {'content': '连接成功', 'tool_calls': None}}]}).encode()]
     assert ai_agent.completion(settings, [], []) == {'role': 'assistant', 'content': '连接成功'}
     response.status_code = 401
     with pytest.raises(ai_agent.HTTPException, match='401'):
         ai_agent.completion(settings, [], [])
+
+
+def test_draft_save_partial_updates_and_unsaved_connection_test(agent, monkeypatch):
+    client = agent.client
+    response = client.put('/api/agent/settings', json={'enabled': True, 'base_url': '', 'model': ''})
+    assert response.status_code == 200 and response.json()['key_configured']
+    assert client.post('/api/agent/settings/test').status_code == 400
+    complete = Mock(return_value=message(content='连接成功'))
+    monkeypatch.setattr(ai_agent, 'completion', complete)
+    draft = {'base_url': 'https://draft.test/custom/v1/chat/completions', 'model': 'draft-model', 'api_type': 'responses'}
+    assert client.post('/api/agent/settings/test', json=draft).status_code == 200
+    called = complete.call_args.args[0]
+    assert called['base_url'] == draft['base_url'] and called['model'] == 'draft-model'
+    assert called['api_key'] == 'test-secret' and called['api_type'] == 'responses'
+    assert not agent.service.settings()['base_url']  # Testing never persists the draft.
+    assert client.put('/api/agent/settings', json=draft).status_code == 200
+    assert client.put('/api/agent/settings', json={'enabled': False}).json()['model'] == 'draft-model'
+    assert client.post('/api/agent/settings/test', json={'api_key': '', 'clear_key': True}).status_code == 200
+    assert complete.call_args.args[0]['api_key'] == ''
+    assert agent.service.settings()['api_key'] == 'test-secret'
+    assert 'test-secret' not in client.get('/api/agent/settings').text
+
+
+@pytest.fixture
+def provider():
+    received = []
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def do_GET(self):
+            received.append((self.path, self.headers.get('Authorization'), None))
+            data = {'data': [{'id': 'vision'}, {'id': 'vision'}, {'id': 'model-z'}, {'id': 123}]}
+            self.send_data(data)
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            received.append((self.path, self.headers.get('Authorization'), body))
+            if self.path.endswith('/responses'):
+                has_result = any(item.get('type') == 'function_call_output' for item in body['input'])
+                output = ([{'type': 'reasoning', 'id': 'rs_1', 'summary': [], 'encrypted_content': 'encrypted'},
+                           {'type': 'function_call', 'call_id': 'call-1', 'name': 'get_status', 'arguments': '{}'}]
+                          if body.get('tools') and not has_result else [
+                              {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': '连接成功'}]}])
+                data = {'status': 'completed', 'output': output}
+            else:
+                has_result = any(item['role'] == 'tool' for item in body['messages'])
+                data = {'choices': [{'message': message(tool('get_status', {})) if body.get('tools') and not has_result else message(content='连接成功')}]}
+            self.send_data(data)
+        def send_data(self, data):
+            raw = json.dumps(data).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f'http://127.0.0.1:{server.server_port}', received
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize('api_type', ['chat_completions', 'responses'])
+@pytest.mark.parametrize('proxy', [False, True])
+def test_real_http_models_test_image_tools_and_proxy(agent, provider, monkeypatch, api_type, proxy):
+    origin, received = provider
+    agent.service.project_proxy = lambda: origin
+    # An unusable process proxy must never override an explicit direct/project selection.
+    monkeypatch.setenv('HTTP_PROXY', 'http://127.0.0.1:1')
+    monkeypatch.setenv('ALL_PROXY', 'http://127.0.0.1:1')
+    suffix = 'responses' if api_type == 'responses' else 'chat/completions'
+    draft = {'base_url': ('http://unresolvable.invalid' if proxy else origin) + '/custom/v1/' + suffix,
+             'model': 'vision', 'api_type': api_type, 'proxy_mode': 'project' if proxy else 'direct'}
+    response = agent.client.post('/api/agent/settings/models', json={**draft, 'model': ''})
+    assert response.status_code == 200 and response.json()['models'] == ['model-z', 'vision']
+    assert received[-1][0].endswith('/custom/v1/models')
+    assert agent.client.post('/api/agent/settings/test', json=draft).status_code == 200
+    assert agent.service.settings()['base_url'] == 'https://example.test/v1'
+    assert agent.client.put('/api/agent/settings', json=draft).status_code == 200
+    result = run(agent, {'message': '查询任务', 'image': 'data:image/png;base64,iVBORw0KGgo=', 'allow_actions': False})
+    assert result['status'] == 'complete' and result['events'][0]['tool'] == 'get_status'
+    assert all(row[1] == 'Bearer test-secret' for row in received)
+    assert len(received) == 4  # Models, unsaved test and two real tool turns.
+    initial, followup = received[-2][2], received[-1][2]
+    if api_type == 'responses':
+        assert initial['store'] is False and initial['include'] == ['reasoning.encrypted_content']
+        assert initial['input'][-1]['content'][1]['type'] == 'input_image'
+        assert initial['tools'][0]['strict'] is False
+        assert any(item.get('encrypted_content') == 'encrypted' for item in followup['input'])
+        assert followup['input'][-1]['type'] == 'function_call_output'
+    else:
+        assert initial['messages'][-1]['content'][1]['type'] == 'image_url'
+        assert followup['messages'][-1]['role'] == 'tool'
+    assert 'data:image/png' not in json.dumps(agent.records['agent_session', result['id']])
+
+
+def test_missing_proxy_and_models_errors_leave_saved_config_unchanged(agent, monkeypatch):
+    client = agent.client
+    assert client.post('/api/agent/settings/models', json={'proxy_mode': 'project'}).status_code == 400
+    assert client.post('/api/agent/settings/test', json={'proxy_mode': 'project'}).status_code == 400
+    assert client.post('/api/agent/settings/models', json={'base_url': ''}).status_code == 400
+    agent.service.project_proxy = lambda: 'socks5://127.0.0.1:8888'
+    assert client.post('/api/agent/settings/test', json={'proxy_mode': 'project'}).status_code == 400
+    agent.service.project_proxy = lambda: 'http://127.0.0.1:8888'
+    assert client.get('/api/agent/settings').json()['project_proxy_configured']
+    monkeypatch.setattr(ai_agent, 'request_json', Mock(return_value={'unexpected': []}))
+    response = client.post('/api/agent/settings/models')
+    assert response.status_code == 502 and '手动' in response.json()['detail']
+    assert agent.service.settings()['proxy_mode'] == 'direct'

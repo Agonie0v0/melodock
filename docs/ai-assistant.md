@@ -1,8 +1,14 @@
 # AI 音乐助手
 
-在「设置 → AI 助手」填写 OpenAI 兼容 API 基础地址、模型 ID 和 API Key，保存并启用。基础地址示例：`https://你的服务商/v1`，程序会追加 `/chat/completions`。本地无鉴权服务可以不填密钥。
+在「设置 → AI 助手」填写 OpenAI 兼容 API 地址和 API Key，选择接口类型与代理，获取模型列表后选择模型，也可以手动填写模型 ID。本地无鉴权服务可以不填密钥。配置可以分步保存，启用后补全 API 地址和模型才能执行对话。
 
-模型必须支持 Chat Completions 的 `tools` / function calling；识别截图还需支持 `image_url` 图片输入。基础连接测试只检查文本接口，图片与工具能力需要在对话中验证。接口格式参考 [OpenAI 官方 API 文档](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。
+支持选择 **Chat Completions**（`/chat/completions`）或 **Responses**（`/responses`）。填写 `https://你的服务商/v1` 等基础地址，或直接粘贴完整接口地址；程序识别末尾接口路径，再按选择的类型发送，获取模型则请求对应前缀下的 `/models`，不会重复拼接路径。Responses 支持图片和工具调用，后续请求会携带工具结果及所需推理上下文。模型必须支持所选接口的工具调用；识别截图还需图片输入能力。
+
+**AI 请求代理** 可选择直连或「使用项目代理」，后者读取「设置 → 音源与下载」中已配置的 HTTP / HTTPS 代理，模型列表、连接测试、网页及聊天渠道的实际 AI 请求都使用同一选择。选择项目代理但未配置地址时会提示补全，不会自动切回直连。代理地址随项目设置实时读取，AI 设置不重复保存凭据。直连模式不读取进程环境变量中的代理。
+
+填写地址和密钥后，页面自动尝试获取模型，也可点击「获取模型列表」刷新。此操作不要求先保存、启用 AI 或填写模型；列表是服务商返回的模型 ID，不代表每个模型都支持工具和图片。列表不可用、为空或服务商未实现 `/models` 时，可以手动输入模型 ID。
+
+「测试当前配置」使用表单中尚未保存的地址、模型、接口类型、密钥及代理；密钥留空时沿用服务器已保存值，勾选清除时本次测试不带密钥。测试与获取模型均不保存草稿；保存不需要联网。基础测试只检查文本接口，图片与工具能力需要在对话中验证。接口格式参考 [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、[Responses 工具调用](https://developers.openai.com/api/docs/guides/function-calling) 和 [模型列表](https://developers.openai.com/api/reference/resources/models/methods/list)。
 
 在主导航打开「AI 助手」，可以直接输入：
 

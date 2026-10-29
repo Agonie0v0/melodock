@@ -238,6 +238,13 @@
 .ai-settings input:not([type="checkbox"]) {
   width: 100%;
 }
+.ai-settings select {
+  width: 100%;
+  min-width: 0;
+}
+.ai-settings .settings-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .ai-settings fieldset > p {
   font-size: 13px;
 }
@@ -250,6 +257,9 @@
   }
 }
 @media (max-width: 600px) {
+  .ai-settings .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .ai-messages {
     padding: 16px;
     max-height: 50vh;
