@@ -30,6 +30,9 @@ export function AISettings() {
   const [modelsNotice, setModelsNotice] = useState("");
   const form = useRef<HTMLFormElement>(null);
   const modelRequest = useRef<AbortController | null>(null);
+  const modelTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
 
   async function load() {
     try {
@@ -65,12 +68,9 @@ export function AISettings() {
     setConfig((current) => current && { ...current, [name]: value });
     setError("");
     setNotice("");
-    if (["base_url", "api_type", "proxy_mode"].includes(name)) {
-      setModels([]);
-      setModelsNotice("");
-    }
   }
   async function fetchModels(value: Draft) {
+    clearTimeout(modelTimer.current);
     modelRequest.current?.abort();
     const controller = new AbortController();
     modelRequest.current = controller;
@@ -103,38 +103,13 @@ export function AISettings() {
       if (modelRequest.current === controller) setModelsBusy(false);
     }
   }
-  useEffect(() => {
-    if (!config?.base_url || clearKey) return;
-    try {
-      new URL(config.base_url);
-    } catch {
-      return;
-    }
-    const value: Draft = {
-      enabled: config.enabled,
-      base_url: config.base_url,
-      model: config.model,
-      api_type: config.api_type,
-      proxy_mode: config.proxy_mode,
-      api_key: key,
-      clear_key: clearKey,
-    };
-    const timer = setTimeout(() => {
-      void fetchModels(value);
-    }, 800);
-    return () => {
-      clearTimeout(timer);
+  useEffect(
+    () => () => {
+      clearTimeout(modelTimer.current);
       modelRequest.current?.abort();
-    };
-  }, [
-    config?.base_url,
-    config?.api_type,
-    config?.proxy_mode,
-    config?.key_configured,
-    key,
-    clearKey,
-  ]);
-  useEffect(() => () => modelRequest.current?.abort(), []);
+    },
+    [],
+  );
 
   return (
     <section className="settings-section ai-settings">
@@ -155,6 +130,38 @@ export function AISettings() {
       ) : (
         <form
           ref={form}
+          onChange={(e) => {
+            const target = e.target;
+            if (
+              !(target instanceof HTMLInputElement) &&
+              !(target instanceof HTMLSelectElement)
+            )
+              return;
+            const { name } = target;
+            if (
+              ![
+                "base_url",
+                "api_type",
+                "proxy_mode",
+                "api_key",
+                "clear_key",
+              ].includes(name)
+            )
+              return;
+            clearTimeout(modelTimer.current);
+            modelRequest.current?.abort();
+            setModelsBusy(false);
+            setModels([]);
+            setModelsNotice("");
+            const value = draft();
+            if (!value.base_url || value.clear_key) return;
+            try {
+              new URL(value.base_url);
+            } catch {
+              return;
+            }
+            modelTimer.current = setTimeout(() => void fetchModels(value), 800);
+          }}
           onSubmit={async (e) => {
             e.preventDefault();
             const value = draft();
@@ -287,7 +294,7 @@ export function AISettings() {
                 {modelsBusy ? "正在获取模型…" : "获取模型列表"}
               </button>
               <small>
-                填写地址与密钥后自动获取；不支持模型列表的服务可手动填写。
+                点击获取；修改地址、密钥、接口或代理后自动刷新，切换页面不会请求。不支持模型列表的服务可手动填写。
               </small>
             </div>
             {modelsNotice && (

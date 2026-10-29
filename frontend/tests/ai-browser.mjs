@@ -76,6 +76,7 @@ try {
   let registrations = 0;
   let testedSettings = null;
   let modelDraft = null;
+  let modelRequests = 0;
   let failModels = false;
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
@@ -106,6 +107,7 @@ try {
       result = { detail: "基础连接成功" };
     }
     if (path === "/agent/settings/models") {
+      modelRequests++;
       modelDraft = route.request().postDataJSON();
       if (failModels) {
         await route.fulfill({
@@ -204,6 +206,7 @@ try {
   await page.getByLabel("AI 请求代理", { exact: true }).selectOption("project");
   await page.getByLabel("API Key", { exact: true }).fill("browser-test-secret");
   await expect(page.getByLabel("选择可用模型", { exact: true })).toBeVisible();
+  assert.equal(modelRequests, 1, "connection edits should be debounced");
   assert.equal(settings.base_url, "");
   assert.equal(modelDraft.api_key, "browser-test-secret");
   assert.equal(modelDraft.proxy_mode, "project");
@@ -242,6 +245,33 @@ try {
   await expect(page.getByLabel("API Key", { exact: true })).toHaveValue("");
   await page.getByRole("button", { name: "测试当前配置", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("基础连接成功");
+  const requestsAfterSave = modelRequests;
+  await page.waitForTimeout(1100);
+  assert.equal(
+    modelRequests,
+    requestsAfterSave,
+    "saving must not fetch models",
+  );
+  for (let i = 0; i < 2; i++) {
+    await page.getByRole("tab", { name: "通知与机器人", exact: true }).click();
+    await page.getByRole("tab", { name: "AI 助手", exact: true }).click();
+    await expect(page.getByLabel("API 基础地址")).toHaveValue(
+      settings.base_url,
+    );
+    await page.waitForTimeout(1100);
+    assert.equal(
+      modelRequests,
+      requestsAfterSave,
+      "reopening must not fetch models",
+    );
+  }
+  await page.getByRole("button", { name: "获取模型列表", exact: true }).click();
+  await expect(page.getByLabel("选择可用模型", { exact: true })).toBeVisible();
+  assert.equal(
+    modelRequests,
+    requestsAfterSave + 1,
+    "manual fetching still works",
+  );
   await mkdir("../output", { recursive: true });
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1800 });
