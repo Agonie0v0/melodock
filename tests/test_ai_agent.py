@@ -288,3 +288,75 @@ def test_missing_proxy_and_models_errors_leave_saved_config_unchanged(agent, mon
     response = client.post('/api/agent/settings/models')
     assert response.status_code == 502 and '手动' in response.json()['detail']
     assert agent.service.settings()['proxy_mode'] == 'direct'
+
+
+def test_long_turn_has_no_time_request_or_tool_caps(agent, monkeypatch):
+    original_timeout = ai_agent.asyncio.timeout
+    monkeypatch.setattr(ai_agent.asyncio, 'timeout', lambda seconds: original_timeout(.03 if seconds == 600 else seconds))
+    count = 0
+    def complete(settings, messages, tools):
+        nonlocal count
+        count += 1
+        time.sleep(.003)
+        if count <= 55:
+            return message(tool('get_status', {}, f'a-{count}'), tool('get_status', {}, f'b-{count}'))
+        return message(content='任务完成')
+    monkeypatch.setattr(ai_agent, 'completion', complete)
+    result = run(agent, {'message': '持续检查任务'})
+    assert result['status'] == 'complete'
+    assert count == 56 and len(result['events']) == 110
+    assert all(item['status'] == 'complete' for item in result['events'])
+
+
+def test_project_operations_schema_validation_and_readonly(agent, monkeypatch):
+    from pydantic import BaseModel
+    class Rename(BaseModel):
+        name: str
+    # Resolve local annotations explicitly for the real FastAPI body validator.
+    changes = []
+    def rename(ident: str, body):
+        changes.append((ident, body.name))
+        return {'id': ident, 'name': body.name}
+    rename.__annotations__['body'] = Rename
+    agent.client.app.add_api_route('/api/playlists/{ident}', rename, methods=['PATCH'])
+    catalog = ai_agent.asyncio.run(agent.service.invoke('list_project_operations', {'keyword': '歌单'}))
+    assert 'PATCH /api/playlists/{ident}' in [item['operation'] for item in catalog['operations']]
+    schema = ai_agent.asyncio.run(agent.service.invoke('list_project_operations', {'operation': 'PATCH /api/playlists/{ident}'}))
+    assert 'requestBody' in schema['schema'] and 'Rename' in schema['components']['schemas']
+    call = {'operation': 'PATCH /api/playlists/{ident}', 'path_params': {'ident': 'real-playlist'}, 'body': {'name': '通勤'}}
+    responses = iter([message(tool('execute_project', call)), message(content='完成')])
+    monkeypatch.setattr(ai_agent, 'completion', lambda *args: next(responses))
+    denied = run(agent, {'message': '重命名', 'allow_actions': False})
+    assert denied['events'][0]['status'] == 'failed' and not changes
+    responses = iter([message(tool('query_project', call)), message(content='完成')])
+    denied = run(agent, {'message': '查询', 'allow_actions': False})
+    assert denied['events'][0]['status'] == 'failed' and not changes
+    responses = iter([message(tool('execute_project', {**call, 'body': {}})),
+                      message(tool('execute_project', call)), message(content='已重命名')])
+    result = run(agent, {'message': '重命名'})
+    assert result['events'][0]['status'] == 'failed' and '422' in result['events'][0]['detail']
+    assert result['events'][1]['status'] == 'complete'
+    assert result['events'][1]['operation'] == call['operation']
+    assert changes == [('real-playlist', '通勤')]
+    for operation in ('GET https://evil.test', 'POST /api/agent/sessions', 'POST /api/auth/login'):
+        with pytest.raises(ai_agent.HTTPException):
+            ai_agent.asyncio.run(agent.service.invoke('execute_project', {'operation': operation}))
+
+
+def test_wait_can_be_stopped_without_waiting_for_full_interval(agent, monkeypatch):
+    monkeypatch.setattr(ai_agent, 'completion', lambda *args: message(tool('wait_for_tasks', {'seconds': 60})))
+    ident = agent.client.post('/api/agent/sessions').json()['id']
+    agent.client.post(f'/api/agent/sessions/{ident}/messages', json={'message': '等待任务'})
+    for _ in range(100):
+        result = agent.client.get(f'/api/agent/sessions/{ident}').json()
+        if result['events']:
+            break
+        time.sleep(.01)
+    assert result['events'][0]['tool'] == 'wait_for_tasks'
+    agent.client.post(f'/api/agent/sessions/{ident}/stop')
+    for _ in range(100):
+        result = agent.client.get(f'/api/agent/sessions/{ident}').json()
+        if result['status'] == 'stopped':
+            break
+        time.sleep(.01)
+    assert result['status'] == 'stopped'

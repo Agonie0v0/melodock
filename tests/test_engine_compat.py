@@ -900,6 +900,65 @@ def test_agent_uses_real_search_and_playlist_services_and_existing_auth(monkeypa
         state['library'].remove('collection', created['id'])
 
 
+def test_agent_project_operations_use_real_routes_and_preserve_config_secrets(monkeypatch):
+    service = app.app.state.ai_agent
+    def invoke(name, **args):
+        return asyncio.run(service.invoke(name, args))
+    catalog = invoke('list_project_operations')['operations']
+    operations = {item['operation'] for item in catalog}
+    for operation in ('PATCH /api/playlists/{ident}', 'PUT /api/favorites/{sid}', 'PUT /api/playlist',
+                      'POST /api/downloads/{ident}/{action}', 'PATCH /api/files/tags',
+                      'DELETE /api/files', 'POST /api/library/jobs/{ident}/apply',
+                      'POST /api/library/jobs/{ident}/restore', 'PUT /api/engine/config',
+                      'PUT /api/library/navidrome', 'POST /api/navidrome/scan',
+                      'PUT /api/bots/config', 'POST /api/logs/clear', 'POST /api/cache/clear'):
+        assert operation in operations
+        assert invoke('list_project_operations', operation=operation)['schema']
+    assert not any('/api/auth/' in name or '/api/agent/sessions' in name for name in operations)
+    assert 'GET /api/stream/{sid}' not in operations
+    created = invoke('execute_project', operation='POST /api/playlists', body={'name': 'AI managed'})['data']
+    try:
+        updated = invoke('execute_project', operation='PATCH /api/playlists/{ident}',
+                         path_params={'ident': created['id']}, body={'name': '通勤收藏'})['data']
+        actual = invoke('query_project', operation='GET /api/playlists/{ident}', path_params={'ident': created['id']})['data']
+        assert actual['name'] == updated['name'] == '通勤收藏'
+        with pytest.raises(engine_api.HTTPException, match='403'):
+            invoke('query_project', operation='DELETE /api/playlists/{ident}', path_params={'ident': created['id']})
+    finally:
+        invoke('execute_project', operation='DELETE /api/playlists/{ident}', path_params={'ident': created['id']})
+    with pytest.raises(engine_api.HTTPException, match='404'):
+        invoke('query_project', operation='GET /api/playlists/{ident}', path_params={'ident': created['id']})
+    cfg = copy.deepcopy(app.original.manager.config)
+    cfg['proxy_url'] = 'http://proxy-user:private-proxy-password@127.0.0.1:7890'
+    cfg['cookies'] = {'NeteaseMusicClient': 'private-cookie'}
+    cfg['requests_overrides'] = {'NeteaseMusicClient': {'headers': {'Authorization': 'private-header'}, 'timeout': 17}}
+    monkeypatch.setattr(app.original.manager, 'config', cfg)
+    visible = invoke('query_project', operation='GET /api/engine/config')['data']
+    serialized = json.dumps(visible)
+    assert all(secret not in serialized for secret in ('private-proxy-password', 'private-cookie', 'private-header'))
+    # Do not reinitialize real providers; assert the complete body delivered to the original service.
+    captured = []
+    monkeypatch.setattr(app.original, 'putconfig', lambda body: captured.append(body.model_dump()))
+    invoke('execute_project', operation='PUT /api/engine/config', body={**visible, 'request_timeout': 77})
+    assert captured[-1]['cookies'] == cfg['cookies']
+    assert captured[-1]['proxy_url'] == cfg['proxy_url']
+    assert captured[-1]['requests_overrides'] == cfg['requests_overrides']
+    assert captured[-1]['request_timeout'] == 77
+    applied = []
+    monkeypatch.setattr(app.original.manager, 'applyconfig', lambda value: applied.append(value))
+    public_config = invoke('query_project', operation='GET /api/config')['data']
+    invoke('execute_project', operation='PUT /api/config', body={**public_config, 'lyrics_mode': 'none'})
+    assert applied[-1]['cookies'] == cfg['cookies']
+    assert applied[-1]['requests_overrides'] == cfg['requests_overrides']
+    assert applied[-1]['lyrics_mode'] == 'none'
+    library = app.app.state.engine_test['library']
+    before = library.settings()
+    updates = []
+    monkeypatch.setattr(library, 'put', lambda kind, ident, value: updates.append((kind, ident, value)))
+    invoke('execute_project', operation='PUT /api/library/settings', body={'backup_days': 99})
+    assert updates[-1][2] == {**before, 'backup_days': 99}
+
+
 @pytest.mark.parametrize('layout,per_source', [('source', False), ('flat', False),
                                             ('artist', False), ('artist_album', False), ('source', True)])
 def test_exact_song_info_persists_and_original_downloader_saves_audio(monkeypatch, layout, per_source):

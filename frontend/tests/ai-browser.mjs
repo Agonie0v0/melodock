@@ -179,6 +179,13 @@ try {
               status: "complete",
               detail: "已向截图收藏加入 1 首歌曲",
             },
+            {
+              tool: "query_project",
+              operation: "GET /api/engine/config",
+              status: "complete",
+              detail: "已读取项目配置",
+              result: { data: { proxy_mode: "project", cookies: "[已隐藏]" } },
+            },
           ];
         }
         result = session;
@@ -314,6 +321,15 @@ try {
   await expect(
     page.locator(".ai-result-list").getByText("晴天", { exact: true }),
   ).toBeVisible();
+  await page
+    .locator(".ai-event")
+    .filter({ hasText: "查询项目" })
+    .locator("summary")
+    .click();
+  await expect(
+    page.getByText("GET /api/engine/config", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".ai-event pre")).toContainText("proxy_mode");
   await mkdir("../output", { recursive: true });
   for (const theme of ["light", "dark"]) {
     await page.evaluate((value) => {
@@ -342,7 +358,7 @@ try {
     page.getByText("已识别《晴天》— 周杰伦，并加入歌单「截图收藏」。"),
   ).toBeVisible();
   finish = false;
-  await page.getByLabel("允许本轮加入歌单、下载和创建整理预览").uncheck();
+  await page.getByLabel("允许本轮执行项目操作").uncheck();
   await page.getByLabel("告诉助手你想做什么").fill("只查询任务状态");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.getByRole("button", { name: "停止本轮" })).toBeVisible();

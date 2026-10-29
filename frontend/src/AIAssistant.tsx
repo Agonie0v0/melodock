@@ -12,7 +12,13 @@ import { api } from "./api";
 import "./ai.css";
 
 type Summary = { id: string; title: string; status: string };
-type Event = { tool: string; status: string; detail: string; result?: unknown };
+type Event = {
+  tool: string;
+  status: string;
+  detail: string;
+  operation?: string;
+  result?: unknown;
+};
 type ResultRow = {
   title?: string;
   name?: string;
@@ -24,7 +30,10 @@ type ResultRow = {
 };
 function ExecutionResult({ value }: { value: unknown }) {
   if (!value || typeof value !== "object") return null;
-  const result = value as Record<string, unknown>;
+  const envelope = value as Record<string, unknown>;
+  const result = (
+    envelope.data && typeof envelope.data === "object" ? envelope.data : value
+  ) as Record<string, unknown>;
   const rows = [
     "tracks",
     "playlists",
@@ -34,6 +43,7 @@ function ExecutionResult({ value }: { value: unknown }) {
   ].flatMap((key) =>
     Array.isArray(result[key]) ? (result[key] as ResultRow[]) : [],
   );
+  if (!rows.length) return <pre>{JSON.stringify(result, null, 2)}</pre>;
   return (
     <ul className="ai-result-list">
       {rows.map((row, index) => (
@@ -80,6 +90,10 @@ const labels: Record<string, string> = {
   get_status: "查询任务",
   browse_library: "查询音乐库",
   preview_organize: "生成整理预览",
+  list_project_operations: "查询项目操作",
+  query_project: "查询项目",
+  execute_project: "执行项目操作",
+  wait_for_tasks: "等待后台任务",
 };
 const states: Record<string, string> = {
   running: "执行中",
@@ -329,7 +343,9 @@ export function AIAssistant({
               <div className="ai-empty">
                 <MessageSquare aria-hidden="true" />
                 <h2>从一句话或一张歌单截图开始</h2>
-                <p>搜索歌曲、收进歌单，或下载后按你的规则整理入库。</p>
+                <p>
+                  搜索下载、管理歌单与曲库，也可以修改设置、管理任务和维护项目。
+                </p>
                 <div className="ai-examples">
                   {examples.map((example) => (
                     <button
@@ -415,9 +431,12 @@ export function AIAssistant({
                   disabled={busy || isRunning}
                   onChange={(e) => setAllowActions(e.target.checked)}
                 />
-                允许本轮加入歌单、下载和创建整理预览
+                允许本轮执行项目操作
               </label>
-              <small>取消勾选后仅查询 · Ctrl / ⌘ + Enter 发送</small>
+              <small>
+                包括修改设置、整理和删除；按你的要求执行。取消勾选后仅查询 ·
+                Ctrl / ⌘ + Enter 发送
+              </small>
             </div>
             <div className="ai-actions">
               <input
@@ -534,6 +553,7 @@ export function AIAssistant({
                   {states[event.status] || event.status}
                 </small>
               </summary>
+              {event.operation && <p>{event.operation}</p>}
               <p>{event.detail}</p>
               {event.result !== undefined && (
                 <ExecutionResult value={event.result} />

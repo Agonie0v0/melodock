@@ -29,7 +29,7 @@ WORKDIR /app
 ENV HOME=/home/melokeep
 COPY requirements.txt install_dependencies.py ./
 RUN python install_dependencies.py --no-cache-dir
-COPY app.py engine_api.py ai_agent.py engine_worker.py search_runtime.py provider_compat.py public_http.py local_library.py library_pipeline.py library_rules.py audio_tools.py metadata_scraper.py navidrome.py resumable_download.py bot_notifications.py bot_channels.py telegram_local.py error_messages.py runtime_config.py docker-entrypoint.py ./
+COPY app.py engine_api.py ai_agent.py project_operations.py engine_worker.py search_runtime.py provider_compat.py public_http.py local_library.py library_pipeline.py library_rules.py audio_tools.py metadata_scraper.py navidrome.py resumable_download.py bot_notifications.py bot_channels.py telegram_local.py error_messages.py runtime_config.py docker-entrypoint.py ./
 COPY legacy/app.py ./legacy/app.py
 COPY --from=frontend /build/frontend/dist /app/frontend/dist
 COPY LICENSE-musicsquare LICENSE-search-engine /licenses/

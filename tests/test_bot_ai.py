@@ -94,6 +94,25 @@ def test_agent_download_registers_owner_and_never_steals_another_task(channel_ag
     asyncio.run(scenario())
 
 
+def test_project_download_tool_keeps_channel_delivery_ownership(channel_agent, monkeypatch):
+    bot, agent, store, app, track = channel_agent
+    def download(items: list[dict]):
+        store.put('download', 'project-download', {'id': 'project-download', 'status': 'queued', 'track': track})
+        return [{'id': 'project-download', 'status': 'queued', 'track': track}]
+    app.add_api_route('/api/downloads', download, methods=['POST'])
+    responses = iter([call('execute_project', {'operation': 'POST /api/downloads',
+                                              'body': [{'track_id': track['id'], 'quality_id': 'best'}]}),
+                      {'role': 'assistant', 'content': '已加入下载队列'}])
+    monkeypatch.setattr(ai_agent, 'completion', lambda *args: next(responses))
+    async def scenario():
+        await bot.command(incoming('/ai 下载指定音质'))
+        await finish(agent)
+        bot.queue_agent_notifications()
+        owned = store.get('bot_task', 'project-download')
+        assert owned['owner'] == 'tg:123' and owned['channel'] == 'tg'
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize('readonly', [True, False])
 def test_readonly_and_global_permissions_enforced(channel_agent, monkeypatch, readonly):
     bot, agent, store, _, track = channel_agent
